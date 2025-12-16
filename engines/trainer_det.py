@@ -159,7 +159,7 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch, print_freq, sc
     # Để đếm số lượng Instances (số cá trong batch)
     total_instances = 0
 
-    for images, targets in metric_logger.log_every(data_loader, print_freq, header=""):
+    for i, (images, targets) in enumerate(metric_logger.log_every(data_loader, print_freq, header="")):
         images = list(image.to(device) for image in images)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 

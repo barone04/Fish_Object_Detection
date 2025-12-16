@@ -20,7 +20,7 @@ echo "======================================================="
 echo "[Step 1/3] Training Dense Faster R-CNN..."
 python train_det.py \
     --data-path $DATA_ROOT \
-    --epochs 1 \
+    --epochs 3 \
     --batch-size $BATCH_SIZE \
     --workers $WORKERS \
     --lr 0.002 \

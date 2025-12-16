@@ -6,6 +6,7 @@ from engines import trainer_det, utils as engine_utils
 from data.fish_det_dataset import FishDetectionDataset, collate_fn
 from data import presets
 from models.faster_rcnn import fasterrcnn_resnet50_fpn
+import types
 
 # module Pruning
 from pruning.songhan_pruner import UnstructuredPruner
@@ -45,6 +46,24 @@ def get_args_parser():
     return parser
 
 
+# Trích xuất layer từ IntermediateLayerGetter
+def get_prunable_layers_wrapper(self, pruning_type="unstructured"):
+    convs = []
+    # 1. Stem (conv1)
+    if hasattr(self, 'conv1'):
+        convs.append(self.conv1)
+
+    # 2. Các Stage (layer1 -> layer4)
+    # IntermediateLayerGetter chứa các layer dưới dạng thuộc tính
+    for layer_name in ['layer1', 'layer2', 'layer3', 'layer4']:
+        if hasattr(self, layer_name):
+            stage = getattr(self, layer_name)
+            for block in stage:
+                # Gọi đệ quy vào từng block (Bottleneck)
+                if hasattr(block, 'get_prunable_layers'):
+                    convs.extend(block.get_prunable_layers(pruning_type))
+    return convs
+
 def main(args):
     engine_utils.init_distributed_mode(args)
     engine_utils.mkdir(args.output_dir)
@@ -78,8 +97,8 @@ def main(args):
     model.to(device)
 
     # 3. Setup Pruners
-    # Quan trọng: Faster R-CNN bọc backbone bên trong 'model.backbone.body'
     backbone_module = model.backbone.body
+    backbone_module.get_prunable_layers = types.MethodType(get_prunable_layers_wrapper, backbone_module)
 
     u_pruner = UnstructuredPruner(backbone_module)
     s_pruner = StructuredPruner(backbone_module)
