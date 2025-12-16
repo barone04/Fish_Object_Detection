@@ -9,7 +9,7 @@ class FishClassificationDataset(Dataset):
     def __init__(self, root, split='train', transforms=None):
         self.root = root
 
-        if split == 'val': split = 'valid'
+        if split == 'val': split = 'val'
         self.img_dir = os.path.join(root, split, "images")
         self.lbl_dir = os.path.join(root, split, "labels")
         self.img_files = sorted([f for f in os.listdir(self.img_dir) if f.endswith(('.jpg', '.png'))])

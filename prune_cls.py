@@ -9,7 +9,7 @@ from pruning.songhan_pruner import UnstructuredPruner
 from pruning.filter_pruner import StructuredPruner
 from pruning.surgery import convert_to_lean_model
 from engines import trainer_cls, utils as engine_utils
-
+from thop import profile
 
 def get_args_parser():
     parser = argparse.ArgumentParser(description="Classification Backbone Pruning")
@@ -22,7 +22,7 @@ def get_args_parser():
     # Pruning Hyperparams
     parser.add_argument("--target-sparsity", default=0.6, type=float, help="Target filter removal ratio (0.0-1.0)")
     parser.add_argument("--prune-iters", default=10, type=int, help="Number of iterative pruning steps")
-    parser.add_argument("--finetune-epochs", default=1, type=int, help="Epochs to retrain between prune steps")
+    parser.add_argument("--finetune-epochs", default=5, type=int, help="Epochs to retrain between prune steps")
     parser.add_argument("--sensitivity-mult", default=2.0, type=float,
                         help="Multiplier for SongHan threshold sensitivity")
 
@@ -35,6 +35,11 @@ def get_args_parser():
     parser.add_argument("--weight-decay", default=1e-4, type=float)
 
     return parser
+
+# def measure_model(model, input_size=(1, 3, 224, 224), device='cuda'):
+#     dummy_input = torch.randn(input_size).to(device)
+#     flops, params = profile(model, inputs=(dummy_input, ), verbose=False)
+#     return flops, params
 
 
 def main(args):
@@ -79,6 +84,9 @@ def main(args):
     print("Evaluating Baseline...")
     acc1 = trainer_cls.evaluate(model, nn.CrossEntropyLoss(), loader_val, device)
     print(f"Baseline Acc@1: {acc1:.2f}%")
+
+    # flops_dense, params_dense = measure_model(model, device)
+    # print(f"Dense Model: FLOPs={flops_dense / 1e9:.2f}G, Params={params_dense / 1e6:.2f}M")
 
     # 3. Setup Pruners
     # Với Classification, ta prune trực tiếp model (vì model chính là backbone)
@@ -135,6 +143,13 @@ def main(args):
     # 3. Copy weight
     # 4. Lưu .pth và .json config
     lean_model = convert_to_lean_model(model, save_path=save_lean_path)
+
+    # if lean_model is not None:
+    #     lean_model.to(device)
+    #     flops_lean, params_lean = measure_model(lean_model, device)
+    #     print(f"Lean Model: FLOPs={flops_lean / 1e9:.2f}G, Params={params_lean / 1e6:.2f}M")
+    #     print(
+    #         f"Reduction: FLOPs -{(1 - flops_lean / flops_dense) * 100:.1f}%, Params -{(1 - params_lean / params_dense) * 100:.1f}%")
 
     if lean_model is not None:
         print(f"Surgery Successful!")

@@ -45,6 +45,51 @@ def _resnet_fpn_extractor(
     )
 
 
+# LOAD WEIGHT PRUNED BACKBONE
+# def fasterrcnn_resnet50_fpn(
+#         weights_backbone=None,
+#         num_classes=91,
+#         compress_rate=None,
+#         trainable_backbone_layers=3,
+#         **kwargs
+# ) -> FasterRCNN:
+#     """
+#     Hàm dựng Faster R-CNN hỗ trợ Backbone Nén.
+#     """
+#
+#     # 1. Khởi tạo Backbone Hybrid (Có thể nén hoặc không)
+#     backbone = resnet_50(compress_rate=compress_rate)
+#
+#     # 2. Load trọng số Backbone (Nếu có)
+#     if weights_backbone is not None:
+#         print(f"Loading backbone weights from: {weights_backbone}")
+#         state_dict = torch.load(weights_backbone)
+#
+#         # Xử lý trường hợp key state_dict có prefix 'module.' hoặc 'backbone.'
+#         if 'state_dict' in state_dict:
+#             state_dict = state_dict['state_dict']
+#         elif 'model' in state_dict:
+#             state_dict = state_dict['model']
+#
+#         # Mapping key (nếu cần thiết, do ConvBNReLU làm thay đổi tên biến)
+#         # Tuy nhiên, nếu train từ đầu bằng resnet_hybrid thì key sẽ khớp.
+#         # Ở đây giả sử key khớp hoặc người dùng tự xử lý mapping bên ngoài.
+#         try:
+#             backbone.load_state_dict(state_dict, strict=False)
+#             # strict=False để bỏ qua fc layer nếu load từ classification
+#         except Exception as e:
+#             print(f"Warning loading backbone: {e}")
+#
+#     # 3. Gắn FPN
+#     backbone_fpn = _resnet_fpn_extractor(backbone, trainable_backbone_layers)
+#
+#     # 4. Tạo Faster R-CNN
+#     model = FasterRCNN(backbone_fpn, num_classes=num_classes, **kwargs)
+#
+#     return model
+
+
+# MODEL BASELINE, DENSE BACKBONE
 def fasterrcnn_resnet50_fpn(
         weights_backbone=None,
         num_classes=91,
@@ -52,37 +97,27 @@ def fasterrcnn_resnet50_fpn(
         trainable_backbone_layers=3,
         **kwargs
 ) -> FasterRCNN:
-    """
-    Hàm dựng Faster R-CNN hỗ trợ Backbone Nén.
-    """
 
-    # 1. Khởi tạo Backbone Hybrid (Có thể nén hoặc không)
-    backbone = resnet_50(compress_rate=compress_rate)
+    init_weights = "DEFAULT" if weights_backbone is None else None
 
-    # 2. Load trọng số Backbone (Nếu có)
-    if weights_backbone is not None:
-        print(f"Loading backbone weights from: {weights_backbone}")
-        state_dict = torch.load(weights_backbone)
+    # 2. Khởi tạo Backbone (Thêm tham số weights=init_weights)
+    backbone = resnet_50(compress_rate=compress_rate, weights=init_weights)
 
-        # Xử lý trường hợp key state_dict có prefix 'module.' hoặc 'backbone.'
-        if 'state_dict' in state_dict:
-            state_dict = state_dict['state_dict']
-        elif 'model' in state_dict:
-            state_dict = state_dict['model']
-
-        # Mapping key (nếu cần thiết, do ConvBNReLU làm thay đổi tên biến)
-        # Tuy nhiên, nếu train từ đầu bằng resnet_hybrid thì key sẽ khớp.
-        # Ở đây giả sử key khớp hoặc người dùng tự xử lý mapping bên ngoài.
+    # 3. Nếu có file weight backbone (ví dụ file .pth nén), thì load đè lên
+    if weights_backbone is not None and str(weights_backbone) != "DEFAULT":
+        print(f"Loading backbone weights from file: {weights_backbone}")
         try:
+            state_dict = torch.load(weights_backbone)
+            if 'state_dict' in state_dict:
+                state_dict = state_dict['state_dict']
+            elif 'model' in state_dict:
+                state_dict = state_dict['model']
             backbone.load_state_dict(state_dict, strict=False)
-            # strict=False để bỏ qua fc layer nếu load từ classification
         except Exception as e:
-            print(f"Warning loading backbone: {e}")
+            print(f"Warning loading backbone file: {e}")
 
-    # 3. Gắn FPN
+    # 4. Gắn FPN và tạo Model
     backbone_fpn = _resnet_fpn_extractor(backbone, trainable_backbone_layers)
-
-    # 4. Tạo Faster R-CNN
     model = FasterRCNN(backbone_fpn, num_classes=num_classes, **kwargs)
 
     return model

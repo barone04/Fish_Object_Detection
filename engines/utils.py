@@ -5,8 +5,114 @@ import torch
 import torch.distributed as dist
 from collections import defaultdict, deque
 
+
+def is_dist_avail_and_initialized():
+    if not dist.is_available():
+        return False
+    if not dist.is_initialized():
+        return False
+    return True
+
+
+def get_world_size():
+    if not is_dist_avail_and_initialized():
+        return 1
+    return dist.get_world_size()
+
+
+def get_rank():
+    if not is_dist_avail_and_initialized():
+        return 0
+    return dist.get_rank()
+
+
+def is_main_process():
+    return get_rank() == 0
+
+
+def save_on_master(*args, **kwargs):
+    if is_main_process():
+        torch.save(*args, **kwargs)
+
+
+def setup_for_distributed(is_master):
+    """
+    Hàm này tắt tính năng in ấn (print) ở các process phụ,
+    chỉ để process chính (master) được in log.
+    """
+    import builtins as __builtin__
+    builtin_print = __builtin__.print
+
+    def print(*args, **kwargs):
+        force = kwargs.pop("force", False)
+        if is_master or force:
+            builtin_print(*args, **kwargs)
+
+    __builtin__.print = print
+
+
+def init_distributed_mode(args):
+    if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
+        args.rank = int(os.environ["RANK"])
+        args.world_size = int(os.environ["WORLD_SIZE"])
+        args.gpu = int(os.environ["LOCAL_RANK"])
+    elif "SLURM_PROCID" in os.environ:
+        args.rank = int(os.environ["SLURM_PROCID"])
+        args.gpu = args.rank % torch.cuda.device_count()
+    else:
+        print("Not using distributed mode")
+        args.distributed = False
+        return
+
+    args.distributed = True
+    torch.cuda.set_device(args.gpu)
+    args.dist_backend = "nccl"
+    print(f"| distributed init (rank {args.rank}): {args.dist_url}", flush=True)
+    torch.distributed.init_process_group(
+        backend=args.dist_backend, init_method=args.dist_url,
+        world_size=args.world_size, rank=args.rank
+    )
+    torch.distributed.barrier()
+    setup_for_distributed(args.rank == 0)
+
+
+# --- HÀM QUAN TRỌNG ĐANG GÂY LỖI ---
+def reduce_dict(input_dict, average=True):
+    """
+    Args:
+        input_dict (dict): tất cả các giá trị sẽ được reduce
+        average (bool): có chia trung bình hay không (True cho loss, False cho count)
+    """
+    world_size = get_world_size()
+    if world_size < 2:
+        return input_dict
+
+    with torch.no_grad():
+        names = []
+        values = []
+        # Sắp xếp key để đảm bảo thứ tự giống nhau giữa các process
+        for k in sorted(input_dict.keys()):
+            names.append(k)
+            values.append(input_dict[k])
+
+        values = torch.stack(values, dim=0)
+        dist.all_reduce(values)
+
+        if average:
+            values /= world_size
+
+        reduced_dict = {k: v for k, v in zip(names, values)}
+
+    return reduced_dict
+
+
+# ---------------------------------------------------------
+# CÁC CLASS METRIC LOGGER (GIỮ NGUYÊN)
+# ---------------------------------------------------------
+
 class SmoothedValue:
     """Theo dõi và làm mịn giá trị loss/metric để hiển thị log."""
+
     def __init__(self, window_size=20, fmt="{median:.4f} ({global_avg:.4f})"):
         self.deque = deque(maxlen=window_size)
         self.total = 0.0
@@ -19,6 +125,9 @@ class SmoothedValue:
         self.total += value * n
 
     def synchronize_between_processes(self):
+        """
+        Warning: không synchronize deque!
+        """
         if not is_dist_avail_and_initialized():
             return
         t = torch.tensor([self.count, self.total], dtype=torch.float64, device="cuda")
@@ -47,11 +156,12 @@ class SmoothedValue:
             median=self.median,
             avg=self.avg,
             global_avg=self.global_avg,
-            max=max(self.deque) if self.deque else 0,
-            value=self.deque[-1] if self.deque else 0
+            max=max(self.deque),
+            value=self.deque[-1]
         )
 
-class MetricLogger:
+
+class MetricLogger(object):
     def __init__(self, delimiter="\t"):
         self.meters = defaultdict(SmoothedValue)
         self.delimiter = delimiter
@@ -92,83 +202,54 @@ class MetricLogger:
         iter_time = SmoothedValue(fmt="{avg:.4f}")
         data_time = SmoothedValue(fmt="{avg:.4f}")
         space_fmt = ":" + str(len(str(len(iterable)))) + "d"
-        log_msg = [
-            header,
-            "[{0" + space_fmt + "}/{1}]",
-            "eta: {eta}",
-            "{meters}",
-            "time: {time}",
-            "data: {data}"
-        ]
-        log_msg = self.delimiter.join(log_msg)
+
+        # Log mặc định của log_every (nếu header != "")
+        if header:
+            log_msg = [
+                header,
+                "[{0" + space_fmt + "}/{1}]",
+                "eta: {eta}",
+                "{meters}",
+                "time: {time}",
+                "data: {data}"
+            ]
+            log_msg = self.delimiter.join(log_msg)
+
         MB = 1024.0 * 1024.0
+
         for obj in iterable:
             data_time.update(time.time() - end)
             yield obj
+
             iter_time.update(time.time() - end)
-            if i % print_freq == 0 or i == len(iterable) - 1:
+            if header and (i % print_freq == 0 or i == len(iterable) - 1):
                 eta_seconds = iter_time.global_avg * (len(iterable) - i)
                 eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
                 if torch.cuda.is_available():
                     print(log_msg.format(
                         i, len(iterable), eta=eta_string,
                         meters=str(self),
-                        time=str(iter_time), data=str(data_time)
-                    ))
+                        time=str(iter_time), data=str(data_time),
+                        memory=torch.cuda.max_memory_allocated() / MB))
                 else:
                     print(log_msg.format(
                         i, len(iterable), eta=eta_string,
                         meters=str(self),
-                        time=str(iter_time), data=str(data_time)
-                    ))
+                        time=str(iter_time), data=str(data_time)))
+
             i += 1
             end = time.time()
-        total_time = time.time() - start_time
-        total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-        print(f"{header} Total time: {total_time_str} ({total_time / len(iterable):.4f} s / it)")
 
-def is_dist_avail_and_initialized():
-    if not dist.is_available():
-        return False
-    if not dist.is_initialized():
-        return False
-    return True
+        if header:
+            total_time = time.time() - start_time
+            total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+            print(f"{header} Total time: {total_time_str} ({total_time / len(iterable):.4f} s / it)")
 
-def get_world_size():
-    if not is_dist_avail_and_initialized():
-        return 1
-    return dist.get_world_size()
 
-def save_on_master(*args, **kwargs):
-    if not is_dist_avail_and_initialized() or dist.get_rank() == 0:
-        torch.save(*args, **kwargs)
-
-def init_distributed_mode(args):
-    if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
-        args.rank = int(os.environ["RANK"])
-        args.world_size = int(os.environ["WORLD_SIZE"])
-        args.gpu = int(os.environ["LOCAL_RANK"])
-    elif "SLURM_PROCID" in os.environ:
-        args.rank = int(os.environ["SLURM_PROCID"])
-        args.gpu = args.rank % torch.cuda.device_count()
-    else:
-        print("Not using distributed mode")
-        args.distributed = False
-        return
-
-    args.distributed = True
-    torch.cuda.set_device(args.gpu)
-    args.dist_backend = "nccl"
-    print(f"| distributed init (rank {args.rank}): {args.dist_url}", flush=True)
-    torch.distributed.init_process_group(
-        backend=args.dist_backend, init_method=args.dist_url,
-        world_size=args.world_size, rank=args.rank
-    )
-    torch.distributed.barrier()
-
+# Tạo alias mkdir để tương thích code cũ
 def mkdir(path):
     try:
         os.makedirs(path)
     except OSError as e:
-        if e.errno != errno.EEXIST:
+        if e.errno != os.errno.EEXIST:
             raise
