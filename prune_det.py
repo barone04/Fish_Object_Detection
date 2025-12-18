@@ -47,14 +47,31 @@ def get_args_parser():
 
 
 # Trích xuất layer từ IntermediateLayerGetter
+# def get_prunable_layers_wrapper(self, pruning_type="unstructured"):
+#     convs = []
+#     # 1. Stem (conv1)
+#     if hasattr(self, 'conv1'):
+#         convs.append(self.conv1)
+#
+#     # 2. Các Stage (layer1 -> layer4)
+#     # IntermediateLayerGetter chứa các layer dưới dạng thuộc tính
+#     for layer_name in ['layer1', 'layer2', 'layer3', 'layer4']:
+#         if hasattr(self, layer_name):
+#             stage = getattr(self, layer_name)
+#             for block in stage:
+#                 # Gọi đệ quy vào từng block (Bottleneck)
+#                 if hasattr(block, 'get_prunable_layers'):
+#                     convs.extend(block.get_prunable_layers(pruning_type))
+#     return convs
 def get_prunable_layers_wrapper(self, pruning_type="unstructured"):
     convs = []
-    # 1. Stem (conv1)
-    if hasattr(self, 'conv1'):
-        convs.append(self.conv1)
 
-    # 2. Các Stage (layer1 -> layer4)
-    # IntermediateLayerGetter chứa các layer dưới dạng thuộc tính
+    if hasattr(self, 'conv1'):
+        if hasattr(self.conv1, 'get_prunable_layers'):
+            convs.extend(self.conv1.get_prunable_layers(pruning_type))
+        else:
+            convs.append(self.conv1)
+
     for layer_name in ['layer1', 'layer2', 'layer3', 'layer4']:
         if hasattr(self, layer_name):
             stage = getattr(self, layer_name)
@@ -62,7 +79,9 @@ def get_prunable_layers_wrapper(self, pruning_type="unstructured"):
                 # Gọi đệ quy vào từng block (Bottleneck)
                 if hasattr(block, 'get_prunable_layers'):
                     convs.extend(block.get_prunable_layers(pruning_type))
+
     return convs
+
 
 def main(args):
     engine_utils.init_distributed_mode(args)
