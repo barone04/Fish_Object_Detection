@@ -33,7 +33,7 @@ class FishDetectionDataset(torch.utils.data.Dataset):
         img_name = self.imgs[idx]
         img_path = os.path.join(self.img_dir, img_name)
 
-        # Load ảnh bằng PIL và convert sang RGB (đề phòng ảnh xám hoặc RGBA)
+        # Load ảnh bằng PIL và convert sang RGB
         img = Image.open(img_path).convert("RGB")
         w, h = img.size
 
@@ -60,7 +60,7 @@ class FishDetectionDataset(torch.utils.data.Dataset):
                         x2 = (cx + bw / 2) * w
                         y2 = (cy + bh / 2) * h
 
-                        # Clip to image boundaries (tránh lỗi số âm hoặc vượt quá ảnh)
+                        # Clip to image boundaries
                         x1 = max(0, x1)
                         y1 = max(0, y1)
                         x2 = min(w, x2)
@@ -74,7 +74,6 @@ class FishDetectionDataset(torch.utils.data.Dataset):
                             labels.append(1)  # Luôn là 1 vì chỉ có 1 loài cá (class_agnostic)
                             area.append((x2 - x1) * (y2 - y1))
 
-        # 3. Tạo Target Dictionary (Chuẩn PyTorch Detection)
         target = {}
         target["image_id"] = torch.tensor([idx])
 
@@ -84,7 +83,7 @@ class FishDetectionDataset(torch.utils.data.Dataset):
             target["area"] = torch.as_tensor(area, dtype=torch.float32)
             target["iscrowd"] = torch.zeros((len(boxes),), dtype=torch.int64)
         else:
-            # Negative sample (ảnh không có cá)
+            # Negative sample
             target["boxes"] = torch.zeros((0, 4), dtype=torch.float32)
             target["labels"] = torch.zeros((0,), dtype=torch.int64)
             target["area"] = torch.zeros((0,), dtype=torch.float32)

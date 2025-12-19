@@ -7,7 +7,7 @@ from models.faster_rcnn import fasterrcnn_resnet50_fpn
 
 # Path
 BASELINE_PATH = "model_29.pth"
-PRUNED_PATH = "model_best.pth"
+PRUNED_PATH = "output/step_1_dense_model/model_best.pth"
 PRUNED_CONFIG = "backbone_lean.json"
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

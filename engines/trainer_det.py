@@ -273,8 +273,6 @@ def evaluate(model, data_loader, device):
         map50 = stats[1]
         recall = stats[8]  # AR maxDets=100
 
-        # Precision trong COCO API không có sẵn trực tiếp như một con số tổng hợp đơn giản
-        # Nhưng ta có thể để trống hoặc dùng mAP50 làm đại diện gần đúng cho chất lượng Box
         precision_display = "-"
 
         print("\n" + "=" * 90)

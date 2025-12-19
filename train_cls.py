@@ -103,9 +103,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--data-path', required=True)
     parser.add_argument('--output-dir', default='.')
-    # THÊM DÒNG NÀY ĐỂ SỬA LỖI, Thêm weight = "DEFAULT" vào để khởi tạo trọng số
-    # Load pretrained model, weight = "DEFAULT" -> training -> pruning -> finetuning -> export .pth
-    # Build model from scratch -> training with initial weight -> pruning -> finetuning -> export .pth
     parser.add_argument('--model', default='resnet50', help='model name')
 
     parser.add_argument('--device', default='cuda')

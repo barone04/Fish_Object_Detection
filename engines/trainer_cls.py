@@ -32,7 +32,6 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, pri
             loss.backward()
             optimizer.step()
 
-        # --- PRUNING HOOK (Quan trọng) ---
         # Nếu đang trong giai đoạn prune, phải ép weight về 0 ngay lập tức
         if pruner is not None:
             pruner.apply_masks()
