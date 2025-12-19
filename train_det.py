@@ -173,6 +173,8 @@ def get_args_parser():
     parser.add_argument("--momentum", default=0.9, type=float)
     parser.add_argument("--output-dir", default=".", type=str)
     parser.add_argument("--resume", default="", type=str, help="path to checkpoint to resume")
+    parser.add_argument('--lr-steps', default=[16, 22], nargs='+', type=int, help='decrease lr every step-size epochs')
+    parser.add_argument('--lr-gamma', default=0.1, type=float, help='decrease lr by a factor of lr-gamma')
 
     # Pruning specific
     parser.add_argument("--weights", default=None, type=str, help="path to full model")
@@ -262,13 +264,23 @@ def main(args):
     # 3. Optimizer
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(params, lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+    lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
+        optimizer,
+        milestones=args.lr_steps,
+        gamma=args.lr_gamma
+    )
     scaler = torch.cuda.amp.GradScaler()
+
 
     # Resume training logic (nếu args.resume được truyền)
     if args.resume:
         checkpoint = torch.load(args.resume, map_location='cpu')
         model.load_state_dict(checkpoint['model'])
         optimizer.load_state_dict(checkpoint['optimizer'])
+
+        if 'lr_scheduler' in checkpoint and lr_scheduler is not None:
+            lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+
         start_epoch = checkpoint['epoch'] + 1
         print(f"Resuming from epoch {start_epoch}")
     else:
@@ -280,11 +292,13 @@ def main(args):
     for epoch in range(start_epoch, args.epochs):
         # A. Train 1 epoch
         trainer_det.train_one_epoch(model, optimizer, data_loader_train, device, epoch, print_freq=50, scaler=scaler)
+        lr_scheduler.step()
 
         # B. Checkpoint dict
         checkpoint_dict = {
             'model': model.state_dict(),
             'optimizer': optimizer.state_dict(),
+            'lr_scheduler': lr_scheduler.state_dict(),
             'epoch': epoch,
             'args': args
         }
