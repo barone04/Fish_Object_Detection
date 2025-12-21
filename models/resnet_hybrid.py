@@ -240,18 +240,49 @@ stage_out_channel_50 = [64] + [256] * 3 + [512] * 4 + [1024] * 6 + [2048] * 3
 
 def adapt_channel_18(compress_rate):
     """
-    Tính toán channel cho ResNet18.
-    Lưu ý: Với BasicBlock, thường ta chỉ prune conv1. Conv2 phải giữ nguyên
-    để khớp với shortcut.
+    Tính toán channel vật lý cho ResNet18 dựa trên compress_rate.
+    FIX: Cần tính toán cả việc nhảy qua index của layer Downsample (Shortcut)
+    nếu layer đó tồn tại trong cấu trúc mạng.
     """
-    if compress_rate is None:
-        return None
+    stage_out = [64, 128, 256, 512]
+    stage_repeat = [2, 2, 2, 2]
 
-    return compress_rate
+    if compress_rate is None:
+        return 64, None
+
+    # Stem
+    stem_rate = compress_rate[0]
+    stem_channels = int(64 * (1 - stem_rate))
+
+    layer_configs = []
+    ptr = 1
+    current_inplanes = 64
+
+    for stage_idx, num_blocks in enumerate(stage_repeat):
+        stage_config = []
+        out_c = stage_out[stage_idx]
+
+        for b in range(num_blocks):
+            stride = 1
+            if stage_idx > 0 and b == 0:
+                stride = 2
+
+            has_downsample = (stride != 1) or (current_inplanes != out_c)
+            rate_c1 = compress_rate[ptr]
+            mid_c = int(out_c * (1 - rate_c1))
+            stage_config.append(mid_c)
+
+            ptr += 2
+            if has_downsample:
+                ptr += 1
+            current_inplanes = out_c
+
+        layer_configs.append(stage_config)
+
+    return stem_channels, layer_configs
 
 
 def adapt_channel_50(compress_rate):
-    """Logic cũ của bạn cho ResNet50"""
     if compress_rate is None:
         compress_rate = [0.0] * 53
 
@@ -280,10 +311,15 @@ def adapt_channel_50(compress_rate):
 class BasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None, cprates=None):
+    def __init__(self, inplanes, planes, stride=1, downsample=None, mid_planes=None):
         super(BasicBlock, self).__init__()
-        self.conv1 = ConvBNReLU(inplanes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
-        self.conv2 = ConvBNReLU(planes, planes, kernel_size=3, stride=1, padding=1, bias=False, relu=False)
+
+        if mid_planes is None:
+            mid_planes = planes
+
+        self.conv1 = ConvBNReLU(inplanes, mid_planes, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.conv2 = ConvBNReLU(mid_planes, planes, kernel_size=3, stride=1, padding=1, bias=False, relu=False)
+
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
         self.stride = stride
@@ -307,7 +343,6 @@ class BasicBlock(nn.Module):
         layers.extend(self.conv1.get_prunable_layers(pruning_type))
         layers.extend(self.conv2.get_prunable_layers(pruning_type))
 
-        # Shortcut nếu là ConvBNReLU cũng prune được
         if isinstance(self.downsample, ConvBNReLU):
             layers.extend(self.downsample.get_prunable_layers(pruning_type))
         elif isinstance(self.downsample, nn.Sequential):
@@ -350,50 +385,64 @@ class Bottleneck(nn.Module):
 
 
 class HybridResNet(nn.Module):
-    def __init__(self, block, layers, compress_rate=None, num_classes=1000, arch='resnet50'):
+    def __init__(self, block, layers, compress_rate=None, num_classes=1000, arch='resnet18'):
         super(HybridResNet, self).__init__()
         self.inplanes = 64
         self.arch = arch
 
-        if arch == 'resnet50':
-            overall_channel, mid_channel = adapt_channel_50(compress_rate)
-            self.mid_channel = mid_channel
-            self.overall_channel = overall_channel
-            # Stem ResNet50
-            self.conv1 = ConvBNReLU(3, overall_channel[0], kernel_size=7, stride=2, padding=3, bias=False)
-        else:
-            # Stem ResNet18
-            self.conv1 = ConvBNReLU(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        stem_channels = 64
+        self.layer_configs = None
 
+        if arch == 'resnet18':
+            stem_c, configs = adapt_channel_18(compress_rate)
+            if stem_c is not None:
+                stem_channels = stem_c
+            self.layer_configs = configs  # List of list: [[blk0_mid, blk1_mid], ...]
+
+        # Stem
+        self.conv1 = ConvBNReLU(3, stem_channels, kernel_size=7, stride=2, padding=3, bias=False)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
 
-        self.layer1 = self._make_layer(block, 64, layers[0], stride=1, layer_idx=0)
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2, layer_idx=1)
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2, layer_idx=2)
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2, layer_idx=3)
+        self.inplanes = stem_channels
+        conf1 = self.layer_configs[0] if self.layer_configs else None
+        self.layer1 = self._make_layer_custom(block, 64, layers[0], stride=1, config=conf1)
+        conf2 = self.layer_configs[1] if self.layer_configs else None
+        self.layer2 = self._make_layer_custom(block, 128, layers[1], stride=2, config=conf2)
+        conf3 = self.layer_configs[2] if self.layer_configs else None
+        self.layer3 = self._make_layer_custom(block, 256, layers[2], stride=2, config=conf3)
+        conf4 = self.layer_configs[3] if self.layer_configs else None
+        self.layer4 = self._make_layer_custom(block, 512, layers[3], stride=2, config=conf4)
 
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
 
-    def _make_layer(self, block, planes, blocks, stride=1, layer_idx=0):
+    def _make_layer_custom(self, block, planes, blocks, stride=1, config=None):
+        """
+        Hàm tạo layer thông minh, hỗ trợ config riêng cho từng block.
+        config: List các mid_planes cho từng block [mid_block0, mid_block1, ...]
+        """
         downsample = None
 
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = ConvBNReLU(
                 self.inplanes, planes * block.expansion,
-                kernel_size=1, stride=stride, bias=False, relu=False
+                kernel_size=1, stride=stride, bias=False, relu=False,
+                padding=0
             )
 
         layers = []
 
-        if self.arch == 'resnet50':
-            pass
+        # Block 0 (Có thể có downsample)
+        # Lấy mid_planes từ config (nếu có)
+        mid_p_0 = config[0] if config else None
+        layers.append(block(self.inplanes, planes, stride, downsample, mid_planes=mid_p_0))
 
-        layers.append(block(self.inplanes, planes, stride, downsample))
         self.inplanes = planes * block.expansion
 
-        for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes))
+        # Block 1 -> N
+        for i in range(1, blocks):
+            mid_p_i = config[i] if config else None
+            layers.append(block(self.inplanes, planes, mid_planes=mid_p_i))
 
         return nn.Sequential(*layers)
 
@@ -404,7 +453,6 @@ class HybridResNet(nn.Module):
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
-
         return x
 
     def get_prunable_layers(self, pruning_type="unstructured"):
