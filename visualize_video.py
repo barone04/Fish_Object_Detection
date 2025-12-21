@@ -1,154 +1,161 @@
-import argparse
-import cv2
 import torch
-import numpy as np
+import cv2
 import os
+import glob
 import json
 import time
-from PIL import Image
-from models.faster_rcnn import fasterrcnn_resnet50_fpn
-from data import presets
+import re
+import numpy as np
+from torchvision.transforms import functional as F
 
-# Danh sách class (Sửa lại tên nếu bạn muốn hiển thị tên thật)
-CLASS_NAMES = [
-    "__background__",
-    "Fish_1"
-]
+# Data path
+IMG_DIR = "/kaggle/input/data123/NewDeepfish/NewDeepfish/images/val"
+
+# path Model Dense (Step 1)
+DENSE_CHECKPOINT = "/kaggle/input/pth-file/pipeline2/step1_dense_det/model_best.pth"
+
+# path Model Pruned (Step 3) & Config JSON (Step 2)
+PRUNED_CHECKPOINT = "/kaggle/input/pth-file/pipeline2/step3_final_result/model_best.pth"
+PRUNED_CONFIG = "/kaggle/input/pth-file/pipeline2/step2_pruned_det/backbone_lean.json"
+
+# output path
+OUTPUT_VIDEO = "comparison_demo.mp4"
+
+DEVICE = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+NUM_CLASSES = 2  # Background + Fish
+CONF_THRESHOLD = 0.5
+FPS_VIDEO = 10  # Speed of output vid
+MAX_FRAMES = 300
 
 
-def get_args():
-    parser = argparse.ArgumentParser(description="Robust Video Inference")
-    parser.add_argument("--input", required=True, help="Path to input video (.flv, .mp4...)")
-    parser.add_argument("--output", default="output_video.avi", help="Path to output video (.avi)")
-    parser.add_argument("--weight", required=True, help="Path to model .pth")
-    parser.add_argument("--compress-rate", default=None, help="Path to json config")
-    parser.add_argument("--conf", default=0.5, type=float, help="Confidence threshold")
-    parser.add_argument("--device", default="cuda", help="Device")
-    return parser.parse_args()
+def load_model_custom(checkpoint_path, config_json=None):
+    """Hàm load model an toàn cho Kaggle/PyTorch mới"""
+    print(f"Loading: {os.path.basename(checkpoint_path)}...")
+
+    # 1. Load Config cắt tỉa (nếu có)
+    compress_rate = None
+    if config_json:
+        with open(config_json, 'r') as f:
+            compress_rate = json.load(f)
+            print(" -> Loaded Pruning Config.")
+
+    # 2. Dựng khung Model
+    model = fasterrcnn_resnet50_fpn(
+        num_classes=NUM_CLASSES,
+        compress_rate=compress_rate,
+        weights_backbone=None
+    )
+
+    # 3. Load Weights (Fix lỗi weights_only)
+    try:
+        ckpt = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+    except TypeError:
+        ckpt = torch.load(checkpoint_path, map_location='cpu')
+
+    if 'model' in ckpt: ckpt = ckpt['model']
+
+    model.load_state_dict(ckpt, strict=False)
+    model.to(DEVICE)
+    model.eval()
+    return model
 
 
-def draw_boxes(frame, predictions, threshold=0.5):
+def run_inference(model, image_tensor, original_image):
+    """Chạy 1 frame và trả về ảnh đã vẽ box + thời gian xử lý"""
+    t0 = time.time()
+    with torch.no_grad():
+        predictions = model(image_tensor)[0]
+    t1 = time.time()
+
+    inference_time = t1 - t0
+    fps_instant = 1.0 / inference_time if inference_time > 0 else 0
+
+    # Vẽ box lên bản sao của ảnh gốc
+    result_img = original_image.copy()
+
     boxes = predictions['boxes'].cpu().numpy()
     scores = predictions['scores'].cpu().numpy()
-    labels = predictions['labels'].cpu().numpy()
 
-    # Vẽ lên bản copy để không ảnh hưởng dữ liệu gốc
-    frame_draw = frame.copy()
+    # Lọc threshold
+    keep = scores > CONF_THRESHOLD
+    boxes = boxes[keep]
+    scores = scores[keep]
 
-    for box, score, label in zip(boxes, scores, labels):
-        if score >= threshold:
-            x1, y1, x2, y2 = box.astype(int)
-            color = (0, 255, 0)  # Xanh lá
+    for box, score in zip(boxes, scores):
+        x1, y1, x2, y2 = map(int, box)
+        # Màu xanh lá
+        cv2.rectangle(result_img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.putText(result_img, f"{score:.2f}", (x1, y1 - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-            # Vẽ Box
-            cv2.rectangle(frame_draw, (x1, y1), (x2, y2), color, 2)
+    return result_img, fps_instant
 
-            # Tên class
-            name_idx = int(label)
-            label_text = CLASS_NAMES[name_idx] if name_idx < len(CLASS_NAMES) else f"Class {name_idx}"
-            caption = f"{label_text}: {score:.2f}"
 
-            # Vẽ nền chữ đen cho dễ đọc
-            (w, h), _ = cv2.getTextSize(caption, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
-            cv2.rectangle(frame_draw, (x1, y1 - 20), (x1 + w, y1), color, -1)
-            cv2.putText(frame_draw, caption, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
+def tryint(s):
+    try:
+        return int(s)
+    except:
+        return s
 
-    return frame_draw
+
+def alphanum_key(s):
+    """Sắp xếp tên file chuẩn (img1, img2... img10)"""
+    return [tryint(c) for c in re.split('([0-9]+)', s)]
 
 
 def main():
-    args = get_args()
-    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
-    print(f"--- Running Inference on {device} ---")
+    # Load model
+    model_dense = load_model_custom(DENSE_CHECKPOINT, None)
+    model_pruned = load_model_custom(PRUNED_CHECKPOINT, PRUNED_CONFIG)
 
-    # 1. Load Config Nén
-    cpr = None
-    if args.compress_rate:
-        with open(args.compress_rate, 'r') as f:
-            cpr = json.load(f)
-        print("Loaded compression config.")
 
-    # 2. Load Model
-    print("Loading model...")
-    model = fasterrcnn_resnet50_fpn(num_classes=14, compress_rate=cpr)
+    images = glob.glob(os.path.join(IMG_DIR, "*.jpg")) + \
+             glob.glob(os.path.join(IMG_DIR, "*.png"))
+    images.sort(key=alphanum_key)
 
-    checkpoint = torch.load(args.weight, map_location='cpu')
-    if 'model' in checkpoint: checkpoint = checkpoint['model']
-    model.load_state_dict(checkpoint)
-    model.to(device)
-    model.eval()
-
-    # 3. Mở Video Input
-    cap = cv2.VideoCapture(args.input)
-    if not cap.isOpened():
-        print(f"ERROR: Could not open video file: {args.input}")
+    if not images:
+        print("ERROR: Can't find any image")
         return
 
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if MAX_FRAMES:
+        images = images[:MAX_FRAMES]
+        print(f"Processing first {len(images)} images.")
 
-    print(f"Input Video: {width}x{height} @ {fps:.2f} FPS ({total_frames} frames)")
+    # Take shape
+    sample = cv2.imread(images[0])
+    h, w, _ = sample.shape
 
-    # 4. Thiết lập Video Output (Dùng MJPG cho an toàn tuyệt đối)
-    save_path = args.output
-    # Tự động đổi đuôi sang .avi nếu người dùng nhập .mp4 (để khớp với MJPG)
-    if not save_path.endswith('.avi'):
-        save_path = os.path.splitext(save_path)[0] + '.avi'
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(OUTPUT_VIDEO, fourcc, FPS_VIDEO, (w * 2, h))
 
-    fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-    out = cv2.VideoWriter(save_path, fourcc, fps, (width, height))
 
-    if not out.isOpened():
-        print("ERROR: Could not initialize VideoWriter. Try installing ffmpeg.")
-        return
+    for i, img_path in enumerate(images):
+        frame = cv2.imread(img_path)
+        if frame is None: continue
 
-    print(f"Output will be saved to: {save_path}")
+        # Preprocess
+        img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        img_tensor = F.to_tensor(img_rgb).to(DEVICE).unsqueeze(0)
 
-    # 5. Vòng lặp Inference
-    transform = presets.DetectionPresetEval()
-    frame_cnt = 0
-    t_start = time.time()
+        # Dense model
+        res_dense, fps_d = run_inference(model_dense, img_tensor, frame)
+        cv2.putText(res_dense, f"DENSE (Original)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        cv2.putText(res_dense, f"FPS: {fps_d:.1f}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
-    try:
-        while True:
-            ret, frame = cap.read()
-            if not ret: break  # Hết video
+        # Pruned model
+        res_pruned, fps_p = run_inference(model_pruned, img_tensor, frame)
+        cv2.putText(res_pruned, f"PRUNED (Compressed)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+        cv2.putText(res_pruned, f"FPS: {fps_p:.1f}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
 
-            # --- Xử lý ảnh (Fix lỗi TypeError PIL) ---
-            # OpenCV (BGR) -> RGB
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            # Numpy -> PIL Image
-            pil_img = Image.fromarray(frame_rgb)
-            # PIL -> Tensor (thông qua preset)
-            img_tensor, _ = transform(pil_img, None)
-            img_tensor = img_tensor.to(device)
-            # ----------------------------------------
 
-            # Predict
-            with torch.no_grad():
-                predictions = model([img_tensor])[0]
+        combined_frame = np.hstack((res_dense, res_pruned))
+        out.write(combined_frame)
 
-            # Vẽ (Dùng frame gốc BGR)
-            final_frame = draw_boxes(frame, predictions, threshold=args.conf)
+        if (i + 1) % 10 == 0:
+            print(f"Processed {i + 1}/{len(images)} frames...")
 
-            # Ghi ra file
-            out.write(final_frame)
-
-            frame_cnt += 1
-            if frame_cnt % 50 == 0:
-                print(f"Processed {frame_cnt}/{total_frames} frames...")
-
-    except KeyboardInterrupt:
-        print("Interrupted by user.")
-    finally:
-        cap.release()
-        out.release()
-        duration = time.time() - t_start
-        print(f"Done! Saved to {save_path}")
-        if duration > 0:
-            print(f"Average Processing Speed: {frame_cnt / duration:.2f} FPS")
+    out.release()
+    print(f"\nVideo saved to: {OUTPUT_VIDEO}")
 
 
 if __name__ == "__main__":

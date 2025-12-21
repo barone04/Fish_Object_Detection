@@ -14,10 +14,8 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 def measure_model(model_name, weights, config=None):
-    print(f"\n>>> Measuring: {model_name}...")
+    print(f"\nMeasuring: {model_name}...")
 
-    # 1. Load Model
-    print("   [Step 1] Loading Model & Config...")
     cpr = None
     if config:
         if os.path.exists(config):
@@ -31,7 +29,6 @@ def measure_model(model_name, weights, config=None):
     if weights:
         if os.path.exists(weights):
             print(f"   Loading weights from {weights}")
-            # Fix lỗi bảo mật pickle bằng weights_only=False
             try:
                 ckpt = torch.load(weights, map_location='cpu', weights_only=False)
             except TypeError:
@@ -48,9 +45,6 @@ def measure_model(model_name, weights, config=None):
     model.eval()
 
     # 2. Measure Params & FLOPs
-    print("   [Step 2] Measuring Params & FLOPs...")
-
-    # Chuẩn bị Dummy Input chuẩn cho Faster R-CNN (List of 3D Tensors)
     dummy_tensor = torch.randn(3, 800, 800).to(DEVICE)
     dummy_input_list = [dummy_tensor]
 
@@ -71,8 +65,6 @@ def measure_model(model_name, weights, config=None):
     except Exception as e:
         print(f"   Warning: Could not measure FLOPs ({e}). Skipping.")
 
-    # 3. Measure FPS
-    print("   [Step 3] Measuring FPS (Warming up)...")
     model.eval()
 
     try:
@@ -82,7 +74,6 @@ def measure_model(model_name, weights, config=None):
                 _ = model(dummy_input_list)
 
         # Run
-        print("   Benchmarking...")
         iters = 50  # Đo 50 lần lấy trung bình
         t_start = time.time()
         with torch.no_grad():
@@ -94,20 +85,15 @@ def measure_model(model_name, weights, config=None):
 
         fps = iters / (t_end - t_start)
     except Exception as e:
-        print(f"   Error measuring FPS: {e}")
+        print(f"Error measuring FPS: {e}")
         fps = 0
 
-    print(f"   -> Done. Params: {params / 1e6:.2f}M | FLOPs: {flops / 1e9:.2f}G | FPS: {fps:.2f}")
+    print(f"Done. Params: {params / 1e6:.2f}M | FLOPs: {flops / 1e9:.2f}G | FPS: {fps:.2f}")
 
-    # QUAN TRỌNG: Dòng này bắt buộc phải có và thụt lề đúng
     return params, flops, fps
 
 
 def main():
-    print("=======================================================")
-    print("STARTING BENCHMARK COMPARISON")
-    print("=======================================================")
-
     try:
         # 1. Measure Baseline
         p_base, f_base, fps_base = measure_model("Baseline (Dense)", BASELINE_PATH, None)
