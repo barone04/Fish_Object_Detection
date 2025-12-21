@@ -26,8 +26,6 @@ def _resnet_fpn_extractor(
 
     return_layers = {f"layer{k}": str(v) for v, k in enumerate(returned_layers)}
 
-    # DYNAMIC IN_CHANNELS: Lấy số kênh thực tế từ backbone (đã bị prune)
-    # Vì ta dùng ConvBNReLU, nó có property .out_channels
     in_channels_list = [
         backbone.layer1[-1].conv3.out_channels,
         backbone.layer2[-1].conv3.out_channels,
@@ -54,10 +52,8 @@ def fasterrcnn_resnet50_fpn(
 
     init_weights = "DEFAULT" if weights_backbone is None else None
 
-    # 2. Khởi tạo Backbone (Thêm tham số weights=init_weights)
     backbone = resnet_50(compress_rate=compress_rate, weights=init_weights)
 
-    # 3. Nếu có file weight backbone (ví dụ file .pth nén), thì load đè lên
     if weights_backbone is not None and str(weights_backbone) != "DEFAULT":
         print(f"Loading backbone weights from file: {weights_backbone}")
         try:
@@ -70,7 +66,6 @@ def fasterrcnn_resnet50_fpn(
         except Exception as e:
             print(f"Warning loading backbone file: {e}")
 
-    # 4. Gắn FPN và tạo Model
     backbone_fpn = _resnet_fpn_extractor(backbone, trainable_backbone_layers)
     model = FasterRCNN(backbone_fpn, num_classes=num_classes, **kwargs)
 
