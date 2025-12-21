@@ -1,99 +1,3 @@
-# import torch
-# import torch.nn as nn
-# import torch.nn.functional as F
-#
-#
-# class UnstructuredMask(nn.Module):
-#     """
-#     Mask dùng cho Stage 1 (Song Han).
-#     Kích thước mask = Kích thước weight (Ví dụ: 64x3x7x7).
-#     """
-#
-#     def __init__(self, weight_shape):
-#         super().__init__()
-#         # Buffer: Được lưu vào state_dict nhưng không phải là tham số train (không có gradient)
-#         self.register_buffer('mask', torch.ones(weight_shape))
-#
-#     def update(self, new_mask):
-#         self.mask.data.copy_(new_mask)
-#
-#     def apply(self, conv_layer):
-#         # Nhân trọng số với mask (ép về 0)
-#         conv_layer.weight.data.mul_(self.mask)
-#
-#
-# class StructuredMask(nn.Module):
-#     """
-#     Mask dùng cho Stage 2 (Filter Pruning).
-#     Kích thước mask = Số kênh output (Ví dụ: 64).
-#     """
-#
-#     def __init__(self, planes):
-#         super().__init__()
-#         self.register_buffer('mask', torch.ones(planes))
-#
-#     def apply(self, conv_layer):
-#         # Dùng einsum để nhân vector mask vào toàn bộ filter
-#         # cijk: channel_out, channel_in, h, w
-#         # c: channel_out
-#         conv_layer.weight.data = torch.einsum("cijk,c->cijk", conv_layer.weight.data, self.mask)
-#
-#
-# class ConvBNReLU(nn.Module):
-#     """
-#     Wrapper 3-trong-1: Conv + BN + ReLU.
-#     Hỗ trợ Pruning Masking bên trong.
-#     """
-#
-#     def __init__(self, in_planes, planes, kernel_size=3, stride=1, padding=1, bias=False, relu=True):
-#         super(ConvBNReLU, self).__init__()
-#
-#         self.conv = nn.Conv2d(in_planes, planes, kernel_size=kernel_size,
-#                               stride=stride, padding=padding, bias=bias)
-#         self.bn = nn.BatchNorm2d(planes)
-#
-#         if relu:
-#             self.relu = nn.ReLU(inplace=True)
-#         else:
-#             self.relu = nn.Identity()
-#
-#         # Placeholder cho Mask (Sẽ được khởi tạo bởi Pruner)
-#         self.mask_handler = None
-#
-#     @property
-#     def out_channels(self):
-#         # Property này CỰC KỲ QUAN TRỌNG để FPN của Faster R-CNN đọc được số kênh
-#         return self.conv.out_channels
-#
-#     @property
-#     def weight(self):
-#         # Proxy để truy cập nhanh weight của conv bên trong
-#         return self.conv.weight
-#
-#     def forward(self, x):
-#         # Lưu ý: Mask thường được apply vào weight TRƯỚC KHI forward
-#         # (thông qua hooks hoặc gọi hàm apply bên ngoài training loop)
-#         out = self.conv(x)
-#         out = self.bn(out)
-#         out = self.relu(out)
-#         return out
-#
-#     def get_prunable_layers(self, pruning_type="unstructured"):
-#         """
-#         Hàm để Pruner tìm thấy layer này và gắn mask vào.
-#         """
-#         # Nếu chưa có mask handler thì khởi tạo
-#         if self.mask_handler is None:
-#             if pruning_type == "unstructured":
-#                 self.mask_handler = UnstructuredMask(self.conv.weight.shape)
-#             elif pruning_type == "structured":
-#                 self.mask_handler = StructuredMask(self.conv.out_channels)
-#
-#             # Move mask về cùng device với conv
-#             self.mask_handler.to(self.conv.weight.device)
-#
-#         return [self]
-
 import torch
 import torch.nn as nn
 
@@ -111,7 +15,6 @@ class UnstructuredMask(nn.Module):
         self.mask.data.copy_(new_mask)
 
     def apply(self, conv_layer):
-        # Nhân element-wise
         conv_layer.weight.data.mul_(self.mask)
 
 
@@ -125,12 +28,9 @@ class StructuredMask(nn.Module):
         self.register_buffer('mask', torch.ones(planes))
 
     def update(self, new_mask):
-        # new_mask là vector 1D
         self.mask.data.copy_(new_mask)
 
     def apply(self, conv_layer):
-        # Broadcast mask (C_out) vào weight (C_out, C_in, H, W)
-        # Reshape mask thành (C_out, 1, 1, 1) để nhân
         conv_layer.weight.data.mul_(self.mask.view(-1, 1, 1, 1))
 
 
