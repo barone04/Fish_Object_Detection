@@ -1,169 +1,9 @@
-# import torch
-# import torch.nn as nn
-# from .conv_bn_relu import ConvBNReLU
-#
-# # --- LOGIC TÍNH KÊNH CỦA CORING ---
-# stage_repeat = [3, 4, 6, 3]
-# stage_out_channel = [64] + [256] * 3 + [512] * 4 + [1024] * 6 + [2048] * 3
-#
-#
-# def adapt_channel(compress_rate):
-#     """
-#     Tính toán số kênh thực tế dựa trên tỷ lệ nén.
-#     Ví dụ: compress_rate=0.5 -> layer 64 kênh còn 32 kênh.
-#     """
-#     # Nếu compress_rate là None hoặc toàn 0 -> Trả về cấu trúc gốc
-#     if compress_rate is None:
-#         compress_rate = [0.0] * 53  # ResNet50 có khoảng 53 layer conv
-#
-#     stage_oup_cprate = []
-#     stage_oup_cprate += [compress_rate[0]]
-#     for i in range(len(stage_repeat) - 1):
-#         stage_oup_cprate += [compress_rate[i + 1]] * stage_repeat[i]
-#     stage_oup_cprate += [0.0] * stage_repeat[-1]
-#
-#     mid_scale_cprate = compress_rate[len(stage_repeat):]
-#
-#     overall_channel = []
-#     mid_channel = []
-#     for i in range(len(stage_out_channel)):
-#         if i == 0:
-#             overall_channel += [int(stage_out_channel[i] * (1 - stage_oup_cprate[i]))]
-#         else:
-#             overall_channel += [int(stage_out_channel[i] * (1 - stage_oup_cprate[i]))]
-#             mid_channel += [
-#                 int(stage_out_channel[i] // 4 * (1 - mid_scale_cprate[i - 1]))
-#             ]
-#
-#     return overall_channel, mid_channel
-#
-#
-# class Bottleneck(nn.Module):
-#     expansion = 4
-#
-#     def __init__(self, midplanes, inplanes, planes, stride=1, is_downsample=False):
-#         super(Bottleneck, self).__init__()
-#
-#         # Conv 1x1 reduce
-#         self.conv1 = ConvBNReLU(inplanes, midplanes, kernel_size=1, stride=1, padding=0, bias=False)
-#
-#         # Conv 3x3
-#         self.conv2 = ConvBNReLU(midplanes, midplanes, kernel_size=3, stride=stride, padding=1, bias=False)
-#
-#         # Conv 1x1 expansion (Tên là conv3 để khớp với FPN Extractor)
-#         self.conv3 = ConvBNReLU(midplanes, planes, kernel_size=1, stride=1, padding=0, bias=False, relu=False)
-#
-#         self.relu = nn.ReLU(inplace=True)
-#         self.shortcut = nn.Identity()
-#
-#         # Logic Downsample
-#         if is_downsample:
-#             # Dùng ConvBNReLU cho shortcut (relu=False) để cũng có thể prune được
-#             self.shortcut = ConvBNReLU(
-#                 inplanes, planes, kernel_size=1, stride=stride, padding=0, bias=False, relu=False
-#             )
-#
-#     def forward(self, x):
-#         out = self.conv1(x)
-#         out = self.conv2(out)
-#         out = self.conv3(out)
-#         out += self.shortcut(x)
-#         out = self.relu(out)
-#         return out
-#
-#     def get_prunable_layers(self, pruning_type="unstructured"):
-#         layers = [self.conv1, self.conv2, self.conv3]
-#         if isinstance(self.shortcut, ConvBNReLU):
-#             layers.append(self.shortcut)
-#         return layers
-#
-#
-# class ResNet50(nn.Module):
-#     def __init__(self, compress_rate, num_classes=1000):
-#         super(ResNet50, self).__init__()
-#
-#         # Tính toán kích thước các layer (Model Surgery Logic)
-#         overall_channel, mid_channel = adapt_channel(compress_rate)
-#
-#         layer_num = 0
-#
-#         # Layer đầu (Stem)
-#         self.conv1 = ConvBNReLU(
-#             3, overall_channel[layer_num], kernel_size=7, stride=2, padding=3, bias=False
-#         )
-#         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-#
-#         self.layer1 = nn.Sequential()
-#         self.layer2 = nn.Sequential()
-#         self.layer3 = nn.Sequential()
-#         self.layer4 = nn.Sequential()
-#
-#         layer_num += 1
-#         stages = ['layer1', 'layer2', 'layer3', 'layer4']
-#
-#         for i, stage_name in enumerate(stages):
-#             stage = getattr(self, stage_name)
-#
-#             # Block đầu tiên của stage (có downsample nếu không phải layer1 hoặc stride > 1)
-#             stride = 1 if i == 0 else 2
-#             is_ds = True  # ResNet50 luôn có downsample/projection ở block đầu stage
-#
-#             stage.append(Bottleneck(
-#                 midplanes=mid_channel[layer_num - 1],
-#                 inplanes=overall_channel[layer_num - 1],
-#                 planes=overall_channel[layer_num],
-#                 stride=stride,
-#                 is_downsample=is_ds
-#             ))
-#             layer_num += 1
-#
-#             # Các Block còn lại
-#             for j in range(1, stage_repeat[i]):
-#                 stage.append(Bottleneck(
-#                     midplanes=mid_channel[layer_num - 1],
-#                     inplanes=overall_channel[layer_num - 1],
-#                     planes=overall_channel[layer_num],
-#                     stride=1,
-#                     is_downsample=False
-#                 ))
-#                 layer_num += 1
-#
-#         # Average Pool & FC (Dùng cho Pipeline 1 - Classification)
-#         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-#         # input FC channel = output layer4
-#         self.fc = nn.Linear(overall_channel[layer_num - 1], num_classes)
-#
-#     def forward(self, x):
-#         x = self.conv1(x)
-#         x = self.maxpool(x)
-#
-#         x = self.layer1(x)
-#         x = self.layer2(x)
-#         x = self.layer3(x)
-#         x = self.layer4(x)
-#
-#         x = self.avgpool(x)
-#         x = torch.flatten(x, 1)
-#         x = self.fc(x)
-#         return x
-#
-#     def get_prunable_layers(self, pruning_type="unstructured"):
-#         convs = [self.conv1]
-#         for stage in [self.layer1, self.layer2, self.layer3, self.layer4]:
-#             for block in stage:
-#                 convs.extend(block.get_prunable_layers(pruning_type))
-#         return convs
-#
-#
-# def resnet_50(compress_rate):
-#     return ResNet50(compress_rate=compress_rate)
-
 import torch
 import torch.nn as nn
 from torchvision.models import resnet50 as torchvision_resnet50, ResNet50_Weights
 from .conv_bn_relu import ConvBNReLU
 
-# --- LOGIC TÍNH KÊNH CỦA CORING ---
+
 stage_repeat = [3, 4, 6, 3]
 stage_out_channel = [64] + [256] * 3 + [512] * 4 + [1024] * 6 + [2048] * 3
 
@@ -306,7 +146,6 @@ class ResNet50(nn.Module):
 
     def get_prunable_layers(self, pruning_type="unstructured"):
         convs = []
-        # GỌI HÀM CỦA ConvBNReLU
         convs.extend(self.conv1.get_prunable_layers(pruning_type))
 
         for stage in [self.layer1, self.layer2, self.layer3, self.layer4]:
@@ -322,7 +161,6 @@ def load_pretrained_weights(model, weights="DEFAULT"):
         return model
 
     print(f"Loading pretrained weights: {weights}")
-    # 1. Load Standard Weights
     if weights == "DEFAULT":
         weights = ResNet50_Weights.DEFAULT
 
@@ -331,7 +169,7 @@ def load_pretrained_weights(model, weights="DEFAULT"):
     custom_state_dict = model.state_dict()
     new_state_dict = {}
 
-    # 2. Mapping Loop
+    # Mapping Loop
     for k, v in std_state_dict.items():
         new_k = k
         # Mapping Stem: conv1.weight -> conv1.conv.weight, bn1.weight -> conv1.bn.weight
@@ -373,7 +211,6 @@ def load_pretrained_weights(model, weights="DEFAULT"):
             # print(f"Key {new_k} not found in custom model") # Debug only
             pass
 
-    # 4. Load strict=False (để cho phép thiếu FC layer)
     model.load_state_dict(new_state_dict, strict=False)
     print("Pretrained weights loaded successfully (Compatible keys only).")
     return model
