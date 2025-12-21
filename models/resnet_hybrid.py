@@ -341,14 +341,17 @@ class BasicBlock(nn.Module):
     def get_prunable_layers(self, pruning_type="unstructured"):
         layers = []
         layers.extend(self.conv1.get_prunable_layers(pruning_type))
-        layers.extend(self.conv2.get_prunable_layers(pruning_type))
 
-        if isinstance(self.downsample, ConvBNReLU):
-            layers.extend(self.downsample.get_prunable_layers(pruning_type))
-        elif isinstance(self.downsample, nn.Sequential):
-            for m in self.downsample:
-                if isinstance(m, ConvBNReLU):
-                    layers.extend(m.get_prunable_layers(pruning_type))
+        if pruning_type == "unstructured":
+            layers.extend(self.conv2.get_prunable_layers(pruning_type))
+
+            if isinstance(self.downsample, ConvBNReLU):
+                layers.extend(self.downsample.get_prunable_layers(pruning_type))
+            elif isinstance(self.downsample, nn.Sequential):
+                for m in self.downsample:
+                    if isinstance(m, ConvBNReLU):
+                        layers.extend(m.get_prunable_layers(pruning_type))
+
         return layers
 
 
