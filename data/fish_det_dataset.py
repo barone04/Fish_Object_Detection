@@ -29,11 +29,9 @@ class FishDetectionDataset(torch.utils.data.Dataset):
         print(f"Found {len(self.imgs)} images in {self.img_dir}")
 
     def __getitem__(self, idx):
-        # 1. Load Ảnh
         img_name = self.imgs[idx]
         img_path = os.path.join(self.img_dir, img_name)
 
-        # Load ảnh bằng PIL và convert sang RGB
         img = Image.open(img_path).convert("RGB")
         w, h = img.size
 
@@ -66,12 +64,9 @@ class FishDetectionDataset(torch.utils.data.Dataset):
                         x2 = min(w, x2)
                         y2 = min(h, y2)
 
-                        # Chỉ lấy box hợp lệ (có diện tích > 0)
                         if x2 > x1 and y2 > y1:
                             boxes.append([x1, y1, x2, y2])
-                            # Faster R-CNN quy ước: 0 là Background.
-                            # Nên class vật thể bắt đầu từ 1.
-                            labels.append(1)  # Luôn là 1 vì chỉ có 1 loài cá (class_agnostic)
+                            labels.append(1)
                             area.append((x2 - x1) * (y2 - y1))
 
         target = {}
@@ -89,7 +84,6 @@ class FishDetectionDataset(torch.utils.data.Dataset):
             target["area"] = torch.zeros((0,), dtype=torch.float32)
             target["iscrowd"] = torch.zeros((0,), dtype=torch.int64)
 
-        # 4. Apply Transforms
         if self.transforms is not None:
             img, target = self.transforms(img, target)
 
@@ -98,13 +92,11 @@ class FishDetectionDataset(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.imgs)
 
-    # Hàm hỗ trợ cho Sampler (nếu dùng GroupedBatchSampler để tối ưu size ảnh)
     def get_height_and_width(self, idx):
         img_path = os.path.join(self.img_dir, self.imgs[idx])
         with Image.open(img_path) as img:
             return img.height, img.width
 
 
-# Hàm collate_fn để gom batch (bắt buộc cho Detection vì size ảnh/box khác nhau)
 def collate_fn(batch):
     return tuple(zip(*batch))
