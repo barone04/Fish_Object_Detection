@@ -76,7 +76,6 @@ def init_distributed_mode(args):
     setup_for_distributed(args.rank == 0)
 
 
-# --- HÀM QUAN TRỌNG ĐANG GÂY LỖI ---
 def reduce_dict(input_dict, average=True):
     """
     Args:
