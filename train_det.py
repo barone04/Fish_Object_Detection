@@ -150,15 +150,13 @@ import torch
 from engines import trainer_det, utils as engine_utils
 from data.fish_det_dataset import FishDetectionDataset, collate_fn
 from data import presets
-from models.faster_rcnn import fasterrcnn_resnet50_fpn
+from models.faster_rcnn import fasterrcnn_resnet50_fpn, fasterrcnn_resnet18_fpn
 
-# --- FIX LỖI "Too many open files" / Multiprocessing ---
 import torch.multiprocessing
 
 torch.multiprocessing.set_sharing_strategy('file_system')
 
 
-# -------------------------------------------------------
 
 def get_args_parser():
     parser = argparse.ArgumentParser(description="Detection Training")
@@ -188,7 +186,6 @@ def main(args):
     engine_utils.init_distributed_mode(args)
     device = torch.device(args.device)
 
-    # 1. Data
     print("Loading Data...")
     dataset_train = FishDetectionDataset(args.data_path, split='train',
                                          transforms=presets.DetectionPresetTrain(data_augmentation='hflip'))
@@ -206,21 +203,18 @@ def main(args):
         num_workers=args.workers, collate_fn=collate_fn
     )
 
-    # 2. Model
     print("Creating Model...")
 
     cpr = args.compress_rate
-    compress_rate_list = None  # Mặc định là None (không nén)
+    compress_rate_list = None
 
     if cpr:
-        # Trường hợp 1: Là đường dẫn file JSON tồn tại
         if os.path.exists(cpr) and os.path.isfile(cpr):
             print(f"Loading compress_rate from file: {cpr}")
             import json
             with open(cpr, 'r') as f:
                 compress_rate_list = json.load(f)
 
-        # Trường hợp 2: Là chuỗi list string "[0.1, 0.5...]"
         elif cpr.startswith('[') and cpr.endswith(']'):
             print(f"Loading compress_rate from string: {cpr}")
             try:
@@ -229,7 +223,6 @@ def main(args):
                 print("Error parsing compress_rate string!")
                 raise
 
-        # Trường hợp 3: Đường dẫn file nhưng code không tìm thấy
         else:
             print(f"Warning: compress_rate provided '{cpr}' but file not found or invalid format!")
             # Kiểm tra xem có phải file json mà surgery sinh ra không
@@ -242,17 +235,20 @@ def main(args):
             else:
                 raise FileNotFoundError(f"Cannot find compress_rate config at {cpr}")
 
-    # Logic ưu tiên: Nếu có weights-backbone thì dùng nó, không thì dùng weights
     w_backbone = args.weights_backbone
 
     # Gọi hàm dựng model
-    model = fasterrcnn_resnet50_fpn(
+    # model = fasterrcnn_resnet50_fpn(
+    #     num_classes=2,
+    #     compress_rate=compress_rate_list,
+    #     weights_backbone=w_backbone
+    # )
+    model = fasterrcnn_resnet18_fpn(
         num_classes=2,
         compress_rate=compress_rate_list,
         weights_backbone=w_backbone
     )
 
-    # Nếu muốn load full model (cho finetune pipeline 2 hoặc resume)
     if args.weights:
         checkpoint = torch.load(args.weights, map_location='cpu')
         if 'model' in checkpoint: checkpoint = checkpoint['model']
@@ -261,7 +257,6 @@ def main(args):
 
     model.to(device)
 
-    # 3. Optimizer
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(params, lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
@@ -272,7 +267,6 @@ def main(args):
     scaler = torch.cuda.amp.GradScaler()
 
 
-    # Resume training logic (nếu args.resume được truyền)
     if args.resume:
         checkpoint = torch.load(args.resume, map_location='cpu')
         model.load_state_dict(checkpoint['model'])
@@ -286,15 +280,12 @@ def main(args):
     else:
         start_epoch = 0
 
-    # 4. Training Loop
-    best_map = 0.0  # Biến theo dõi kết quả tốt nhất
+    best_map = 0.0
 
     for epoch in range(start_epoch, args.epochs):
-        # A. Train 1 epoch
         trainer_det.train_one_epoch(model, optimizer, data_loader_train, device, epoch, print_freq=50, scaler=scaler)
         lr_scheduler.step()
 
-        # B. Checkpoint dict
         checkpoint_dict = {
             'model': model.state_dict(),
             'optimizer': optimizer.state_dict(),
@@ -303,16 +294,11 @@ def main(args):
             'args': args
         }
 
-        # Save 'last' model (ghi đè mỗi epoch, dùng để resume nếu bị ngắt)
         if args.output_dir:
             engine_utils.save_on_master(checkpoint_dict, os.path.join(args.output_dir, "model_last.pth"))
 
-        # C. Evaluate & Save Best
-        # Hàm evaluate trả về coco_evaluator
         coco_evaluator = trainer_det.evaluate(model, data_loader_test, device=device)
 
-        # Lấy mAP từ coco_evaluator
-        # stats[0] là mAP @ IoU=0.50:0.95 (Primary metric)
         current_map = 0.0
         if coco_evaluator is not None and hasattr(coco_evaluator, 'coco_eval'):
             current_map = coco_evaluator.coco_eval['bbox'].stats[0]

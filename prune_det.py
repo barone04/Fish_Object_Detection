@@ -5,15 +5,13 @@ import copy
 from engines import trainer_det, utils as engine_utils
 from data.fish_det_dataset import FishDetectionDataset, collate_fn
 from data import presets
-from models.faster_rcnn import fasterrcnn_resnet50_fpn
+from models.faster_rcnn import fasterrcnn_resnet50_fpn, fasterrcnn_resnet18_fpn
 import types
 
-# module Pruning
 from pruning.songhan_pruner import UnstructuredPruner
 from pruning.filter_pruner import StructuredPruner
 from pruning import surgery
 
-# Fix lỗi multiprocessing
 import torch.multiprocessing
 
 torch.multiprocessing.set_sharing_strategy('file_system')
@@ -88,9 +86,7 @@ def main(args):
     engine_utils.mkdir(args.output_dir)
     device = torch.device(args.device)
 
-    # 1. Prepare Data
     print("Loading Data...")
-    # Lưu ý: Pipeline 2 dataset có 2 class (1 cá + 1 nền)
     dataset_train = FishDetectionDataset(args.data_path, split='train',
                                          transforms=presets.DetectionPresetTrain(data_augmentation='hflip'))
     dataset_test = FishDetectionDataset(args.data_path, split='val',
@@ -105,29 +101,26 @@ def main(args):
         num_workers=args.workers, collate_fn=collate_fn
     )
 
-    # 2. Load Dense Model (Baseline)
     print(f"Loading Dense Model from {args.checkpoint}...")
     # Khởi tạo model full (Dense)
-    model = fasterrcnn_resnet50_fpn(num_classes=2)
+    # model = fasterrcnn_resnet50_fpn(num_classes=2)
+    model = fasterrcnn_resnet18_fpn(num_class=2)
 
     checkpoint = torch.load(args.checkpoint, map_location='cpu', weights_only=False)
     if 'model' in checkpoint: checkpoint = checkpoint['model']
     model.load_state_dict(checkpoint)
     model.to(device)
 
-    # 3. Setup Pruners
     backbone_module = model.backbone.body
     backbone_module.get_prunable_layers = types.MethodType(get_prunable_layers_wrapper, backbone_module)
 
     u_pruner = UnstructuredPruner(backbone_module)
     s_pruner = StructuredPruner(backbone_module)
 
-    # Optimizer (Chỉ optimize các params yêu cầu grad)
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(params, lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
     scaler = torch.cuda.amp.GradScaler()
 
-    # 4. Pruning Loop (Iterative)
     print(f"Start Pruning Loop: Target={args.target_sparsity}, Iters={args.prune_iters}")
 
     # Baseline Eval
@@ -137,34 +130,25 @@ def main(args):
     for i in range(args.prune_iters):
         print(f"\n--- Pruning Iteration {i + 1}/{args.prune_iters} ---")
 
-        # Target 0.4, 5 iters -> 0.08, 0.16, 0.24, 0.32, 0.40
         current_sparsity = args.target_sparsity * (i + 1) / args.prune_iters
 
-        # A. Song Han (Unstructured)
         # Sensitivity tăng dần (ví dụ từ 0.2 lên 1.0)
         # Heuristic: sensitivity ~ 2 * current_sparsity
         sensitivity = 2.0 * current_sparsity
         u_pruner.prune(sensitivity=sensitivity)
 
-        # B. Filter Pruning (Structured)
         s_pruner.prune(prune_ratio=current_sparsity)
 
-        # C. Finetune to Recover
         print(f"Finetuning for {args.finetune_epochs} epochs...")
         for epoch in range(args.finetune_epochs):
-            # Pass u_pruner vào để nó ép weight=0 sau mỗi step (nếu cần thiết)
-            # Tuy nhiên ConvBNReLU forward đã handle việc nhân mask rồi.
             trainer_det.train_one_epoch(model, optimizer, data_loader_train, device, epoch, print_freq=50,
                                         scaler=scaler)
 
-        # D. Evaluate
         trainer_det.evaluate(model, data_loader_test, device=device)
 
-    # 5. Model Surgery (Tạo file backbone_lean.json và backbone_lean.pth)
     print("\n--- Performing Model Surgery ---")
     save_path = os.path.join(args.output_dir, "backbone_lean.pth")
 
-    # Trích xuất backbone nén từ model to
     lean_backbone = surgery.convert_to_lean_model(backbone_module, save_path)
 
     if lean_backbone is not None:
