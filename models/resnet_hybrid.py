@@ -256,7 +256,7 @@ def adapt_channel_18(compress_rate):
 
     layer_configs = []
     ptr = 1
-    current_inplanes = 64
+    current_inplanes = stem_channels
 
     for stage_idx, num_blocks in enumerate(stage_repeat):
         stage_config = []
@@ -275,6 +275,7 @@ def adapt_channel_18(compress_rate):
             ptr += 2
             if has_downsample:
                 ptr += 1
+
             current_inplanes = out_c
 
         layer_configs.append(stage_config)
