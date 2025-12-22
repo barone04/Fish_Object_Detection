@@ -178,7 +178,7 @@ def get_args_parser():
     parser.add_argument("--weights", default=None, type=str, help="path to full model")
     parser.add_argument("--weights-backbone", default=None, type=str, help="path to backbone only")
     parser.add_argument("--compress-rate", default=None, type=str, help="path to json config or string list")
-
+    parser.add_argument("--test-only", dest="test_only", help="Only test the model", action="store_true")
     return parser
 
 
@@ -279,6 +279,11 @@ def main(args):
         print(f"Resuming from epoch {start_epoch}")
     else:
         start_epoch = 0
+
+    if args.test_only:
+        print("Running in Test-Only mode...")
+        trainer_det.evaluate(model, data_loader_test, device=device)
+        return
 
     best_map = 0.0
 
