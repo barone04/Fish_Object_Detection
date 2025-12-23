@@ -194,7 +194,8 @@ def convert_to_lean_model(masked_model, save_path=None):
             lean_model = resnet_50(compress_rate=compress_rates, num_classes=num_classes)
         elif isinstance(first_layer_block, BasicBlock):
             print("ResNet18")
-            lean_model = resnet_18(compress_rate=compress_rates, num_classes=num_classes)
+            # FIX NUMCLASS = 2
+            lean_model = resnet_18(compress_rate=compress_rates, num_classes=2)
         else:
             raise ValueError(f"Unknown block type: {type(first_layer_block)}")
 
