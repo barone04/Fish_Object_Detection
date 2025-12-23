@@ -104,7 +104,7 @@ def main(args):
     print(f"Loading Dense Model from {args.checkpoint}...")
     # Khởi tạo model full (Dense)
     # model = fasterrcnn_resnet50_fpn(num_classes=2)
-    model = fasterrcnn_resnet18_fpn(num_class=2)
+    model = fasterrcnn_resnet18_fpn(num_classes=2)
 
     checkpoint = torch.load(args.checkpoint, map_location='cpu', weights_only=False)
     if 'model' in checkpoint: checkpoint = checkpoint['model']
