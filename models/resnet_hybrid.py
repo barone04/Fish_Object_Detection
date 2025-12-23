@@ -240,9 +240,9 @@ stage_out_channel_50 = [64] + [256] * 3 + [512] * 4 + [1024] * 6 + [2048] * 3
 
 def adapt_channel_18(compress_rate):
     """
-    Tính toán channel vật lý cho ResNet18 dựa trên compress_rate.
-    FIX: Cần tính toán cả việc nhảy qua index của layer Downsample (Shortcut)
-    nếu layer đó tồn tại trong cấu trúc mạng.
+    Tính toán channel vật lý cho ResNet18.
+    FIX FINAL: Logic duyệt ptr phải dựa trên cấu trúc Model GỐC (Dense),
+    bất kể Model Pruned có thay đổi thế nào.
     """
     stage_out = [64, 128, 256, 512]
     stage_repeat = [2, 2, 2, 2]
@@ -250,14 +250,12 @@ def adapt_channel_18(compress_rate):
     if compress_rate is None:
         return 64, None
 
-    # Stem
     stem_rate = compress_rate[0]
     stem_channels = int(64 * (1 - stem_rate))
 
     layer_configs = []
     ptr = 1
-    current_inplanes = stem_channels
-
+    dense_inplanes = 64
     for stage_idx, num_blocks in enumerate(stage_repeat):
         stage_config = []
         out_c = stage_out[stage_idx]
@@ -267,17 +265,16 @@ def adapt_channel_18(compress_rate):
             if stage_idx > 0 and b == 0:
                 stride = 2
 
-            has_downsample = (stride != 1) or (current_inplanes != out_c)
+            original_has_downsample = (stride != 1) or (dense_inplanes != out_c)
             rate_c1 = compress_rate[ptr]
             mid_c = int(out_c * (1 - rate_c1))
             stage_config.append(mid_c)
 
             ptr += 2
-            if has_downsample:
+            if original_has_downsample:
                 ptr += 1
 
-            current_inplanes = out_c
-
+            dense_inplanes = out_c
         layer_configs.append(stage_config)
 
     return stem_channels, layer_configs
