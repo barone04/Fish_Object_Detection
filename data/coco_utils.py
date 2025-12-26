@@ -29,6 +29,9 @@ def convert_to_coco_api(ds):
     print("Converting dataset to COCO format for evaluation...")
 
     for i in tqdm(range(len(ds))):
+        # Lấy target từ dataset (không cần load ảnh nặng)
+        # Giả sử dataset của bạn có hàm get_height_and_width hoặc __getitem__
+        # Cách an toàn nhất là lấy item (chậm hơn chút nhưng chắc chắn đúng)
         img, targets = ds[i]
 
         image_id = targets["image_id"].item()

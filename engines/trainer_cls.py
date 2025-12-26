@@ -17,6 +17,7 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, pri
     for image, target in metric_logger.log_every(data_loader, print_freq, header):
         image, target = image.to(device), target.to(device)
 
+        # Mixed Precision Training (FP16) cho H100
         with torch.cuda.amp.autocast(enabled=scaler is not None):
             output = model(image)
             loss = criterion(output, target)
@@ -31,6 +32,8 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, pri
             loss.backward()
             optimizer.step()
 
+        # --- PRUNING HOOK (Quan trọng) ---
+        # Nếu đang trong giai đoạn prune, phải ép weight về 0 ngay lập tức
         if pruner is not None:
             pruner.apply_masks()
 

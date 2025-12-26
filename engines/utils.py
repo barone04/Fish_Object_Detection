@@ -76,6 +76,7 @@ def init_distributed_mode(args):
     setup_for_distributed(args.rank == 0)
 
 
+# --- HÀM QUAN TRỌNG ĐANG GÂY LỖI ---
 def reduce_dict(input_dict, average=True):
     """
     Args:
@@ -104,6 +105,10 @@ def reduce_dict(input_dict, average=True):
 
     return reduced_dict
 
+
+# ---------------------------------------------------------
+# CÁC CLASS METRIC LOGGER (GIỮ NGUYÊN)
+# ---------------------------------------------------------
 
 class SmoothedValue:
     """Theo dõi và làm mịn giá trị loss/metric để hiển thị log."""
@@ -241,6 +246,7 @@ class MetricLogger(object):
             print(f"{header} Total time: {total_time_str} ({total_time / len(iterable):.4f} s / it)")
 
 
+# Tạo alias mkdir để tương thích code cũ
 def mkdir(path):
     try:
         os.makedirs(path)

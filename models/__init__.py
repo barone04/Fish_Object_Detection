@@ -1,3 +1,3 @@
 from .conv_bn_relu import ConvBNReLU
-from .resnet_hybrid import resnet_50, ResNet50
-from .faster_rcnn import fasterrcnn_resnet50_fpn
+from .efficientnet_hybrid import efficientnet_b0_classifier
+from .faster_rcnn import fasterrcnn_efficientnet_b0_fpn

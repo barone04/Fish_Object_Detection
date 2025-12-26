@@ -1,6 +1,7 @@
 import argparse
 import cv2
 import torch
+import numpy as np
 import os
 import json
 import random
@@ -11,7 +12,9 @@ from models.faster_rcnn import fasterrcnn_resnet50_fpn
 # Danh sách class (Sửa lại nếu cần thiết)
 CLASS_NAMES = [
     "__background__",
-    "Fish_1"
+    "Fish_1", "Fish_2", "Fish_3", "Fish_4", "Fish_5",
+    "Fish_6", "Fish_7", "Fish_8", "Fish_9", "Fish_10",
+    "Fish_11", "Fish_12", "Fish_13"
 ]
 
 
@@ -37,6 +40,7 @@ def draw_boxes(img_bgr, predictions, threshold=0.5):
         if score >= threshold:
             x1, y1, x2, y2 = box.astype(int)
 
+            # Màu xanh lá
             color = (0, 255, 0)
 
             # Vẽ Box
@@ -46,6 +50,7 @@ def draw_boxes(img_bgr, predictions, threshold=0.5):
             label_name = CLASS_NAMES[label] if label < len(CLASS_NAMES) else f"Class {label}"
             text = f"{label_name}: {score:.2f}"
 
+            # Vẽ nền chữ cho dễ đọc
             (w, h), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
             cv2.rectangle(img_draw, (x1, y1 - 20), (x1 + w, y1), color, -1)
             cv2.putText(img_draw, text, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
@@ -57,9 +62,11 @@ def main():
     args = get_args()
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
 
+    # 1. Tạo thư mục output
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
+    # 2. Load Config & Model
     cpr = None
     if args.compress_rate:
         with open(args.compress_rate, 'r') as f:
@@ -75,9 +82,11 @@ def main():
     model.to(device)
     model.eval()
 
-    # Lấy Random 3 ảnh
+    # 3. Lấy Random 3 ảnh
+    # Giả sử cấu trúc: data_path/val/images/*.png hoặc *.jpg
     img_dir = os.path.join(args.data_path, "test", "images")
     if not os.path.exists(img_dir):
+        # Fallback thử folder train nếu val không có
         img_dir = os.path.join(args.data_path, "val", "images")
 
     all_imgs = [f for f in os.listdir(img_dir) if f.endswith(('.png', '.jpg', '.jpeg'))]
@@ -85,13 +94,15 @@ def main():
 
     print(f"Selected images: {selected_imgs}")
 
-    # Inference Loop
+    # 4. Inference Loop
     transform = T.Compose([T.ToTensor()])  # Convert [0, 255] -> [0.0, 1.0]
 
     for img_name in selected_imgs:
         img_path = os.path.join(img_dir, img_name)
 
+        # Đọc ảnh bằng OpenCV (BGR)
         img_bgr = cv2.imread(img_path)
+        # Convert sang RGB để đưa vào model
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
 
         # Preprocess
@@ -101,13 +112,15 @@ def main():
         with torch.no_grad():
             prediction = model([img_tensor])[0]
 
+        # Vẽ kết quả lên ảnh gốc (BGR)
         result_img = draw_boxes(img_bgr, prediction, threshold=args.conf)
 
+        # Lưu ảnh
         save_path = os.path.join(args.output_dir, f"pred_{img_name}")
         cv2.imwrite(save_path, result_img)
         print(f"Saved result to: {save_path}")
 
-    print("result images from folder:", args.output_dir)
+    print("Done! Please download the images from folder:", args.output_dir)
 
 
 if __name__ == "__main__":

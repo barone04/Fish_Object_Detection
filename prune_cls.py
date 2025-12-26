@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from data.fish_cls_dataset import FishClassificationDataset
-from models.resnet_hybrid import resnet_50
+from models.efficientnet_hybrid import efficientnet_b0_classifier
 from pruning.songhan_pruner import UnstructuredPruner
 from pruning.filter_pruner import StructuredPruner
 from pruning.surgery import convert_to_lean_model
@@ -70,7 +70,7 @@ def main(args):
     # 2. Load Model Dense
     # ResNet50 Hybrid (chưa nén)
     print(f"Loading dense backbone from {args.checkpoint}...")
-    model = resnet_50(compress_rate=None, num_classes=13)  # 13 class cá
+    model = efficientnet_b0_classifier(num_classes=13, pretrained=True)
 
     checkpoint = torch.load(args.checkpoint, map_location='cpu')
     if 'model' in checkpoint:
