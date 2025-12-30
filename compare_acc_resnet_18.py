@@ -17,7 +17,7 @@ from models.faster_rcnn import fasterrcnn_resnet18_fpn
 DATA_PATH = "./NewDeepfish/NewDeepfish"
 
 # 2. Đường dẫn Model Step 1 (Dense - Chưa cắt)
-DENSE_MODEL_PATH = "./output/pipeline2/step1_dense_det/model_best.pth"
+DENSE_MODEL_PATH = "model_best.pth"
 
 # 3. Đường dẫn Model Step 3 (Pruned - Đã cắt và finetune)
 PRUNED_MODEL_PATH = "./output/pipeline2/step3_final_result/model_best.pth"
@@ -28,7 +28,7 @@ PRUNED_CONFIG_PATH = "./output/pipeline2/step2_pruned_det/backbone_lean.json"
 
 # 5. Các cài đặt khác
 NUM_CLASSES = 2  # Background + Fish
-DEVICE = 'cuda'  # hoặc 'cpu'
+DEVICE = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')# hoặc 'cpu'
 BATCH_SIZE = 8  # Batch size khi test (có thể tăng lên 16 nếu VRAM đủ)
 NUM_WORKERS = 4
 
@@ -63,7 +63,7 @@ def load_model_resnet18(checkpoint_path, config_json_path=None, num_classes=2, d
 
     # 3. Load Trọng số (Weights)
     if os.path.exists(checkpoint_path):
-        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
 
         # Xử lý key bọc ngoài (thường là 'model' hoặc 'state_dict')
         if 'model' in checkpoint:

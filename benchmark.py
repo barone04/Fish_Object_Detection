@@ -3,12 +3,12 @@ import time
 import json
 import os
 from thop import profile
-from models.faster_rcnn import fasterrcnn_resnet50_fpn
+from models.faster_rcnn import fasterrcnn_resnet50_fpn, fasterrcnn_resnet18_fpn
 
 # Path
-BASELINE_PATH = "output/step1_dense_det/model_best.pth"
-PRUNED_PATH = "output/step3_final_result/model_best.pth"
-PRUNED_CONFIG = "output/step2_pruned_det/backbone_lean.json"
+BASELINE_PATH = "output/Faster_RCNN_Resnet18/step1_dense_det/step1_dense_det/model_best.pth"
+PRUNED_PATH = "output/Faster_RCNN_Resnet18/step3_final_result/step3_final_result/model_best.pth"
+PRUNED_CONFIG = "output/Faster_RCNN_Resnet18/step2_pruned_det/step2_pruned_det/backbone_lean.json"
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -24,7 +24,8 @@ def measure_model(model_name, weights, config=None):
         else:
             print(f"Warning: Config file not found at {config}")
 
-    model = fasterrcnn_resnet50_fpn(num_classes=2, compress_rate=cpr)
+    # model = fasterrcnn_resnet50_fpn(num_classes=2, compress_rate=cpr)
+    model = fasterrcnn_resnet18_fpn(num_classes=2, compress_rate=cpr)
 
     if weights:
         if os.path.exists(weights):
