@@ -1,178 +1,48 @@
-# from typing import Any, Optional
-# import torch
-# from torchvision.models.detection.faster_rcnn import FasterRCNN
-# from torchvision.models.detection.backbone_utils import _validate_trainable_layers, BackboneWithFPN
-# from torchvision.ops.feature_pyramid_network import LastLevelMaxPool
-#
-# from .resnet_hybrid import resnet_50, ResNet50
-#
-# def _resnet_fpn_extractor(
-#         backbone: ResNet50,
-#         trainable_layers: int,
-#         returned_layers: Optional[list] = None,
-# ):
-#     # Logic đóng băng layer
-#     layers_to_train = ["layer4", "layer3", "layer2", "layer1", "conv1"][:trainable_layers]
-#     if trainable_layers == 5:
-#         layers_to_train.append("bn1")
-#
-#     for name, parameter in backbone.named_parameters():
-#         if all([not name.startswith(layer) for layer in layers_to_train]):
-#             parameter.requires_grad_(False)
-#
-#     if returned_layers is None:
-#         returned_layers = [1, 2, 3, 4]
-#
-#     return_layers = {f"layer{k}": str(v) for v, k in enumerate(returned_layers)}
-#
-#     in_channels_list = [
-#         backbone.layer1[-1].conv3.out_channels,
-#         backbone.layer2[-1].conv3.out_channels,
-#         backbone.layer3[-1].conv3.out_channels,
-#         backbone.layer4[-1].conv3.out_channels,
-#     ]
-#
-#     out_channels = 256
-#     return BackboneWithFPN(
-#         backbone,
-#         return_layers,
-#         in_channels_list,
-#         out_channels,
-#         extra_blocks=LastLevelMaxPool(),
-#     )
-#
-# def fasterrcnn_resnet50_fpn(
-#         weights_backbone=None,
-#         num_classes=91,
-#         compress_rate=None,
-#         trainable_backbone_layers=3,
-#         **kwargs
-# ) -> FasterRCNN:
-#
-#     init_weights = "DEFAULT" if weights_backbone is None else None
-#
-#     backbone = resnet_50(compress_rate=compress_rate, weights=init_weights)
-#
-#     if weights_backbone is not None and str(weights_backbone) != "DEFAULT":
-#         print(f"Loading backbone weights from file: {weights_backbone}")
-#         try:
-#             state_dict = torch.load(weights_backbone)
-#             if 'state_dict' in state_dict:
-#                 state_dict = state_dict['state_dict']
-#             elif 'model' in state_dict:
-#                 state_dict = state_dict['model']
-#             backbone.load_state_dict(state_dict, strict=False)
-#         except Exception as e:
-#             print(f"Warning loading backbone file: {e}")
-#
-#     backbone_fpn = _resnet_fpn_extractor(backbone, trainable_backbone_layers)
-#     model = FasterRCNN(backbone_fpn, num_classes=num_classes, **kwargs)
-#
-#     return model
-
-from typing import Any, Optional
 import torch
 from torchvision.models.detection.faster_rcnn import FasterRCNN
 from torchvision.models.detection.backbone_utils import BackboneWithFPN
-from torchvision.ops.feature_pyramid_network import LastLevelMaxPool
-from .resnet_hybrid import resnet_50, resnet_18
+from torchvision.models._utils import IntermediateLayerGetter
+from .custom_fpn import PrunableFPN
+from .resnet_hybrid import resnet_18, resnet_50
 
 
-def _resnet_fpn_extractor(
-        backbone,
-        trainable_layers: int,
-        returned_layers: Optional[list] = None,
-):
-    layers_to_train = ["layer4", "layer3", "layer2", "layer1", "conv1"][:trainable_layers]
-    if trainable_layers == 5:
-        layers_to_train.append("bn1")
+def _create_faster_rcnn_hybrid(backbone_body, num_classes, weights_backbone, fpn_compress_rate, **kwargs):
+    """Hàm helper dùng chung cho cả R18 và R50"""
+    dummy = torch.randn(1, 3, 224, 224)
+    return_layers = {'layer1': '0', 'layer2': '1', 'layer3': '2', 'layer4': '3'}
 
-    for name, parameter in backbone.named_parameters():
-        if all([not name.startswith(layer) for layer in layers_to_train]):
-            parameter.requires_grad_(False)
+    body_extractor = IntermediateLayerGetter(backbone_body, return_layers=return_layers)
+    with torch.no_grad():
+        feats = body_extractor(dummy)
+        in_channels_list = [v.shape[1] for k, v in feats.items()]
 
-    if returned_layers is None:
-        returned_layers = [1, 2, 3, 4]
-
-    return_layers = {f"layer{k}": str(v) for v, k in enumerate(returned_layers)}
-
-    in_channels_list = []
-    for i in range(1, 5):
-        # Lấy block cuối cùng của stage
-        last_block = getattr(backbone, f"layer{i}")[-1]
-
-        if hasattr(last_block, 'conv3'):
-            # Bottleneck
-            in_channels_list.append(last_block.conv3.out_channels)
-        elif hasattr(last_block, 'conv2'):
-            # BasicBlock
-            in_channels_list.append(last_block.conv2.out_channels)
-        else:
-            raise ValueError(f"Unknown block structure in layer{i}")
-
-    out_channels = 256
-    return BackboneWithFPN(
-        backbone,
-        return_layers,
-        in_channels_list,
-        out_channels,
-        extra_blocks=LastLevelMaxPool(),
-    )
-
-
-def fasterrcnn_resnet50_fpn(
-        weights_backbone=None,
-        num_classes=91,
-        compress_rate=None,
-        trainable_backbone_layers=3,
-        **kwargs
-) -> FasterRCNN:
-    init_weights = "DEFAULT" if weights_backbone is None else None
-
-    backbone = resnet_50(compress_rate=compress_rate, weights=init_weights)
+    custom_fpn = PrunableFPN(in_channels_list, out_channels=256, compress_rate=fpn_compress_rate)
+    backbone_with_fpn = BackboneWithFPN(backbone_body, return_layers, [0, 1, 2, 3], None, custom_fpn)
+    model = FasterRCNN(backbone_with_fpn, num_classes=num_classes, **kwargs)
 
     if weights_backbone is not None and str(weights_backbone) != "DEFAULT":
-        print(f"Loading backbone weights from file: {weights_backbone}")
+        print(f"Loading weights from: {weights_backbone}")
         try:
             state_dict = torch.load(weights_backbone, map_location='cpu')
-            if 'state_dict' in state_dict:
-                state_dict = state_dict['state_dict']
-            elif 'model' in state_dict:
-                state_dict = state_dict['model']
-            backbone.load_state_dict(state_dict, strict=False)
+            if 'model' in state_dict: state_dict = state_dict['model']
+            model.load_state_dict(state_dict, strict=False)
         except Exception as e:
-            print(f"Warning loading backbone file: {e}")
-
-    backbone_fpn = _resnet_fpn_extractor(backbone, trainable_backbone_layers)
-    model = FasterRCNN(backbone_fpn, num_classes=num_classes, **kwargs)
+            print(f"Warning: Could not load weights fully ({e})")
 
     return model
 
 
-def fasterrcnn_resnet18_fpn(
-        weights_backbone=None,
-        num_classes=91,
-        compress_rate=None,
-        trainable_backbone_layers=3,
-        **kwargs
-) -> FasterRCNN:
+def fasterrcnn_resnet18_fpn(weights_backbone=None, num_classes=91, compress_rate=None, fpn_compress_rate=None,
+                            **kwargs):
+    # Init Backbone R18
     init_weights = "DEFAULT" if weights_backbone is None else None
-
     backbone = resnet_18(compress_rate=compress_rate, weights=init_weights)
+    return _create_faster_rcnn_hybrid(backbone, num_classes, weights_backbone, fpn_compress_rate, **kwargs)
 
-    if weights_backbone is not None and str(weights_backbone) != "DEFAULT":
-        print(f"Loading backbone weights from file: {weights_backbone}")
-        try:
-            state_dict = torch.load(weights_backbone, map_location='cpu')
-            if 'state_dict' in state_dict:
-                state_dict = state_dict['state_dict']
-            elif 'model' in state_dict:
-                state_dict = state_dict['model']
-            backbone.load_state_dict(state_dict, strict=False)
-        except Exception as e:
-            print(f"Warning loading backbone file: {e}")
 
-    backbone_fpn = _resnet_fpn_extractor(backbone, trainable_backbone_layers)
-    model = FasterRCNN(backbone_fpn, num_classes=num_classes, **kwargs)
-
-    return model
+def fasterrcnn_resnet50_fpn(weights_backbone=None, num_classes=91, compress_rate=None, fpn_compress_rate=None,
+                            **kwargs):
+    # Init Backbone R50
+    init_weights = "DEFAULT" if weights_backbone is None else None
+    backbone = resnet_50(compress_rate=compress_rate, weights=init_weights)
+    return _create_faster_rcnn_hybrid(backbone, num_classes, weights_backbone, fpn_compress_rate, **kwargs)
