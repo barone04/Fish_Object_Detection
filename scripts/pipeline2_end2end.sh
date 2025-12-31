@@ -39,7 +39,8 @@ python prune_det.py \
     --prune-iters 8 \
     --finetune-epochs 10 \
     --batch-size $BATCH_SIZE \
-    --output-dir $OUTPUT_ROOT/step2_pruned_det
+    --output-dir $OUTPUT_ROOT/step2_pruned_det \
+    --prune-fpn # Thực hiện prune FPN (nếu không muốn prune chỉ cần comment/delete)
 
 # ---------------------------------------------------------
 # BƯỚC 3: Final Finetuning
@@ -47,8 +48,8 @@ python prune_det.py \
 echo "[Step 3/3] Final Finetuning..."
 python train_det.py \
     --data-path $DATA_ROOT \
-    --weights-backbone $OUTPUT_ROOT/step2_pruned_det/backbone_lean.pth \
-    --compress-rate $OUTPUT_ROOT/step2_pruned_det/backbone_lean.json \
+    --weights-backbone $OUTPUT_ROOT/step2_pruned_det/model_lean.pth \
+    --compress-rate $OUTPUT_ROOT/step2_pruned_det/model_lean.json \
     --epochs 50 \
     --batch-size $BATCH_SIZE \
     --workers $WORKERS \
