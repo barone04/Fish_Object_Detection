@@ -151,6 +151,7 @@ from engines import trainer_det, utils as engine_utils
 from data.fish_det_dataset import FishDetectionDataset, collate_fn
 from data import presets
 from models.faster_rcnn import fasterrcnn_resnet50_fpn, fasterrcnn_resnet18_fpn
+import json
 
 import torch.multiprocessing
 
@@ -205,49 +206,39 @@ def main(args):
 
     print("Creating Model...")
 
-    cpr = args.compress_rate
-    compress_rate_list = None
+    backbone_rates = None
+    fpn_rates = None
 
-    if cpr:
-        if os.path.exists(cpr) and os.path.isfile(cpr):
-            print(f"Loading compress_rate from file: {cpr}")
-            import json
-            with open(cpr, 'r') as f:
-                compress_rate_list = json.load(f)
+    # Load Config từ JSON
+    if args.compress_rate:
+        print(f"Loading pruning config from: {args.compress_rate}")
+        with open(args.compress_rate, 'r') as f:
+            config_data = json.load(f)
 
-        elif cpr.startswith('[') and cpr.endswith(']'):
-            print(f"Loading compress_rate from string: {cpr}")
-            try:
-                compress_rate_list = eval(cpr)
-            except:
-                print("Error parsing compress_rate string!")
-                raise
+            # Xử lý tương thích ngược
+            if isinstance(config_data, list):
+                # Format cũ: Chỉ có backbone
+                backbone_rates = config_data
+                fpn_rates = None
+            elif isinstance(config_data, dict):
+                # Format mới: {backbone: [], fpn: []}
+                backbone_rates = config_data.get('backbone')
+                fpn_rates = config_data.get('fpn')
 
-        else:
-            print(f"Warning: compress_rate provided '{cpr}' but file not found or invalid format!")
-            # Kiểm tra xem có phải file json mà surgery sinh ra không
-            potential_path = cpr.replace('config.json', 'backbone_lean.json')
-            if os.path.exists(potential_path):
-                print(f"Found alternative config file: {potential_path}")
-                import json
-                with open(potential_path, 'r') as f:
-                    compress_rate_list = json.load(f)
-            else:
-                raise FileNotFoundError(f"Cannot find compress_rate config at {cpr}")
-
-    w_backbone = args.weights_backbone
-
-    # Gọi hàm dựng model
-    # model = fasterrcnn_resnet50_fpn(
-    #     num_classes=2,
-    #     compress_rate=compress_rate_list,
-    #     weights_backbone=w_backbone
-    # )
-    model = fasterrcnn_resnet18_fpn(
-        num_classes=2,
-        compress_rate=compress_rate_list,
-        weights_backbone=w_backbone
-    )
+    if args.model == 'fasterrcnn_resnet18_fpn':
+        model = fasterrcnn_resnet18_fpn(
+            num_classes=2,
+            weights_backbone=args.weights_backbone,
+            compress_rate=backbone_rates,
+            fpn_compress_rate=fpn_rates
+        )
+    else:  # ResNet50
+        model = fasterrcnn_resnet50_fpn(
+            num_classes=2,
+            weights_backbone=args.weights_backbone,
+            compress_rate=backbone_rates,
+            fpn_compress_rate=fpn_rates
+        )
 
     if args.weights:
         checkpoint = torch.load(args.weights, map_location='cpu')

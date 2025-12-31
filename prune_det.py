@@ -41,6 +41,8 @@ def get_args_parser():
 
     parser.add_argument("--output-dir", default="./output/pipeline2_pruned", type=str)
 
+    parser.add_argument("--prune-fpn", action="store_true", help="Enable pruning for FPN layers")
+    parser.add_argument("--freeze-backbone", action="store_true", help="Case 2: Freeze backbone, only prune FPN")
     return parser
 
 
@@ -74,7 +76,6 @@ def get_prunable_layers_wrapper(self, pruning_type="unstructured"):
         if hasattr(self, layer_name):
             stage = getattr(self, layer_name)
             for block in stage:
-                # Gọi đệ quy vào từng block (Bottleneck)
                 if hasattr(block, 'get_prunable_layers'):
                     convs.extend(block.get_prunable_layers(pruning_type))
 
@@ -103,19 +104,46 @@ def main(args):
 
     print(f"Loading Dense Model from {args.checkpoint}...")
     # Khởi tạo model full (Dense)
-    # model = fasterrcnn_resnet50_fpn(num_classes=2)
-    model = fasterrcnn_resnet18_fpn(num_classes=2)
+    if args.model == 'fasterrcnn_resnet50_fpn':
+        model = fasterrcnn_resnet50_fpn(num_classes=2)
+    else:
+        model = fasterrcnn_resnet18_fpn(num_classes=2)
 
     checkpoint = torch.load(args.checkpoint, map_location='cpu', weights_only=False)
     if 'model' in checkpoint: checkpoint = checkpoint['model']
     model.load_state_dict(checkpoint)
     model.to(device)
 
-    backbone_module = model.backbone.body
-    backbone_module.get_prunable_layers = types.MethodType(get_prunable_layers_wrapper, backbone_module)
+    prunable_layers = []
 
-    u_pruner = UnstructuredPruner(backbone_module)
-    s_pruner = StructuredPruner(backbone_module)
+    if not args.freeze_backbone:
+        backbone_module = model.backbone.body
+        if hasattr(backbone_module, 'get_prunable_layers_wrapper'):
+            # Gọi wrapper của bạn
+            backbone_module.get_prunable_layers = types.MethodType(get_prunable_layers_wrapper, backbone_module)
+            prunable_layers.extend(backbone_module.get_prunable_layers())
+        elif hasattr(backbone_module, 'get_prunable_layers'):
+            prunable_layers.extend(backbone_module.get_prunable_layers())
+        print(f"Added Backbone layers. Total: {len(prunable_layers)}")
+
+    if args.prune_fpn:
+        if hasattr(model.backbone, 'fpn') and hasattr(model.backbone.fpn, 'layer_blocks'):
+            for block in model.backbone.fpn.layer_blocks:
+                if hasattr(block, 'get_prunable_layers'):
+                    prunable_layers.extend(block.get_prunable_layers())
+            print(f"Added FPN layers. Total: {len(prunable_layers)}")
+        else:
+            print("Warning: --prune-fpn set but FPN modules not found or not prunable!")
+
+    if len(prunable_layers) == 0:
+        print("Error: No layers selected for pruning! Check --prune-fpn or --freeze-backbone flags.")
+        return
+
+    # Gán vào Pruner
+    u_pruner = UnstructuredPruner(None)
+    u_pruner.layers = prunable_layers
+    s_pruner = StructuredPruner(None)
+    s_pruner.layers = prunable_layers
 
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(params, lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
@@ -147,9 +175,9 @@ def main(args):
         trainer_det.evaluate(model, data_loader_test, device=device)
 
     print("\n--- Performing Model Surgery ---")
-    save_path = os.path.join(args.output_dir, "backbone_lean.pth")
+    save_path = os.path.join(args.output_dir, "model_lean.pth")
 
-    lean_backbone = surgery.convert_to_lean_model(backbone_module, save_path)
+    lean_backbone = surgery.convert_to_lean_model(model, save_path)
 
     if lean_backbone is not None:
         print("Surgery Successful!")

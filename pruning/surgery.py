@@ -1,265 +1,177 @@
-# import torch
-# import torch.nn as nn
-# from models.resnet_hybrid import resnet_50, Bottleneck, resnet_18, BasicBlock
-# from models.conv_bn_relu import ConvBNReLU
-#
-#
-# def get_kept_indices(mask_handler):
-#     """
-#     Trả về danh sách index của các filter được giữ lại (Mask = 1).
-#     """
-#     if mask_handler is None or mask_handler.s_mask is None:
-#         return None
-#
-#     mask = mask_handler.s_mask.mask
-#     # Lấy các vị trí có giá trị = 1
-#     indices = torch.nonzero(mask).squeeze()
-#     if indices.dim() == 0: indices = indices.unsqueeze(0)
-#     return indices
-#
-#
-# def convert_to_lean_model(masked_model, save_path=None):
-#     print("Starting Model Surgery (Physical Removal)...")
-#
-#     # 1. Trích xuất Compress Rates
-#     compress_rates = []
-#     # Cần duyệt model theo thứ tự đúng để list compress_rates khớp với logic init của ResNet
-#     # Ta duyệt qua các modules, tìm ConvBNReLU
-#     for m in masked_model.modules():
-#         if isinstance(m, ConvBNReLU):
-#             if m.s_mask is not None:
-#                 mask = m.s_mask.mask
-#                 kept = mask.sum().item()
-#                 total = mask.numel()
-#                 compress_rates.append(1.0 - (kept / total))
-#             else:
-#                 compress_rates.append(0.0)
-#
-#     print(f"Extracted {len(compress_rates)} layers. Creating Lean Model...")
-#
-#     num_classes = masked_model.fc.out_features if hasattr(masked_model, 'fc') else 1000
-#     try:
-#         lean_model = resnet_50(compress_rate=compress_rates, num_classes=num_classes)
-#     except Exception as e:
-#         print(f"Error creating lean model: {e}")
-#         return None
-#
-#     print("Copying weights based on masks...")
-#
-#     # Helper để lấy layer từ model bằng tên (vd: layer1[0].conv1)
-#     def get_layer(model, name):
-#         return dict(model.named_modules())[name]
-#
-#     # Map state_dict của lean model
-#     lean_state_dict = lean_model.state_dict()
-#     masked_state_dict = masked_model.state_dict()
-#
-#     # Chúng ta cần theo dõi 'indices' của layer trước đó để cắt chiều Input
-#     # Với ResNet, luồng dữ liệu phức tạp (Skip connection).
-#     # Để đơn giản và hiệu quả, ta sẽ duyệt theo cấu trúc Block.
-#
-#     # A. Copy các layer không bị prune (FC, Stem đầu vào nếu ko prune)
-#     # Lưu ý: Stem (conv1) input là ảnh (3 kênh) -> Ko cần cắt chiều In.
-#
-#     # Ta duyệt qua từng tên tham số trong Lean Model
-#     for name, param in lean_model.named_parameters():
-#         if name not in masked_state_dict:
-#             continue
-#
-#         masked_param = masked_state_dict[name]
-#
-#         # Tách tên module và tên tham số (vd: layer1.0.conv1.conv.weight -> layer1.0.conv1.conv, weight)
-#         module_name = ".".join(name.split(".")[:-1])
-#         param_type = name.split(".")[-1]  # weight, bias
-#
-#         lean_module = get_layer(lean_model, module_name)
-#         masked_module = get_layer(masked_model, module_name)
-#
-#         # 1. Xử lý Conv2d
-#         if isinstance(lean_module, nn.Conv2d):
-#             # Tìm mask của chính layer này (Output Mask)
-#             # Vì lean_module nằm trong ConvBNReLU của lean_model, ta cần tìm ConvBNReLU cha
-#             # Nhưng ở đây ta đang iterate param của nn.Conv2d.
-#             # Parent của nn.Conv2d chính là ConvBNReLU trong code resnet_hybrid.
-#
-#             # Để đơn giản: Ta so sánh shape.
-#             # Nếu shape khớp -> Copy thẳng.
-#             if param.shape == masked_param.shape:
-#                 param.data.copy_(masked_param.data)
-#                 continue
-#
-#             # Lấy parent module (ConvBNReLU) bên Masked Model
-#             # Tên module_name ví dụ: layer1.0.conv1.conv
-#             parent_name = ".".join(module_name.split(".")[:-1])  # layer1.0.conv1
-#             parent_masked_module = get_layer(masked_model, parent_name)
-#
-#             # Lấy Indices Output (Filter cần giữ)
-#             out_idx = get_kept_indices(parent_masked_module)
-#
-#
-#             if out_idx is not None and len(out_idx) == param.shape[0]:
-#                 # Cắt chiều Output
-#                 w_temp = masked_param.data[out_idx, :, :, :]
-#
-#                 # Cắt chiều Input
-#                 # Nếu số kênh input cũng bị giảm (lean < masked)
-#                 if param.shape[1] < masked_param.shape[1]:
-#                     # Cần tìm in_idx.
-#                     # Với ConvBNReLU trong Block:
-#                     # conv2 input là output conv1.
-#                     # conv3 input là output conv2.
-#                     # conv1 input là output block trước.
-#
-#                     param.data.copy_(w_temp[:, :param.shape[1], :, :])
-#                 else:
-#                     param.data.copy_(w_temp)
-#             else:
-#                 # Fallback: Copy phần góc trên bên trái (Sub-tensor)
-#                 # Đây là cách tệ nhất nhưng đảm bảo code chạy ko lỗi
-#                 print(f"Shape mismatch heavy at {name}: {param.shape} vs {masked_param.shape}. Slicing...")
-#                 param.data.copy_(masked_param.data[:param.shape[0], :param.shape[1], :, :])
-#
-#         # 2. Xử lý BatchNorm (weight, bias, running_mean, running_var)
-#         elif isinstance(lean_module, nn.BatchNorm2d):
-#             # BN chỉ có 1 chiều (theo số kênh Output)
-#             # Ta cần tìm Mask tương ứng của Conv liền trước nó.
-#
-#             # Tên module: layer1.0.conv1.bn
-#             parent_name = ".".join(module_name.split(".")[:-1])  # layer1.0.conv1
-#             parent_masked_module = get_layer(masked_model, parent_name)
-#
-#             out_idx = get_kept_indices(parent_masked_module)
-#
-#             if out_idx is not None and len(out_idx) == param.shape[0]:
-#                 param.data.copy_(masked_param.data[out_idx])
-#             else:
-#                 param.data.copy_(masked_param.data[:param.shape[0]])
-#
-#         # 3. Các layer khác (FC)
-#         else:
-#             if param.shape == masked_param.shape:
-#                 param.data.copy_(masked_param.data)
-#
-#     if save_path:
-#         torch.save(lean_model.state_dict(), save_path)
-#         import json
-#         with open(save_path.replace('.pth', '.json'), 'w') as f:
-#             json.dump(compress_rates, f)
-#
-#     return lean_model
-#
-#
-#
 import torch
 import torch.nn as nn
-from models.resnet_hybrid import resnet_50, Bottleneck, resnet_18, BasicBlock
+import json
+import os
+from models.resnet_hybrid import Bottleneck, BasicBlock
 from models.conv_bn_relu import ConvBNReLU
+from models.faster_rcnn import fasterrcnn_resnet18_fpn, fasterrcnn_resnet50_fpn
 
 
 def get_kept_indices(mask_handler):
-    """
-    Trả về danh sách index của các filter được giữ lại (Mask = 1).
-    """
     if mask_handler is None or mask_handler.s_mask is None:
         return None
-
     mask = mask_handler.s_mask.mask
     indices = torch.nonzero(mask).squeeze()
     if indices.dim() == 0: indices = indices.unsqueeze(0)
     return indices
 
 
+def get_layer(model, name):
+    return dict(model.named_modules())[name]
+
+
 def convert_to_lean_model(masked_model, save_path=None):
-    print("Starting Model Surgery (Physical Removal)...")
+    print("Starting Model Surgery...")
 
-    compress_rates = []
-    for m in masked_model.modules():
-        if isinstance(m, ConvBNReLU):
-            if m.s_mask is not None:
-                mask = m.s_mask.mask
-                kept = mask.sum().item()
-                total = mask.numel()
-                compress_rates.append(1.0 - (kept / total))
-            else:
-                compress_rates.append(0.0)
+    backbone_compress_rates = []
+    if hasattr(masked_model, 'backbone') and hasattr(masked_model.backbone, 'body'):
+        for m in masked_model.backbone.body.modules():
+            if isinstance(m, ConvBNReLU):
+                if m.s_mask is not None:
+                    mask = m.s_mask.mask
+                    kept = mask.sum().item()
+                    total = mask.numel()
+                    backbone_compress_rates.append(1.0 - (kept / total))
+                else:
+                    backbone_compress_rates.append(0.0)
 
-    print(f"Extracted {len(compress_rates)} layers. Creating Lean Model...")
+    fpn_compress_rates = []
+    if hasattr(masked_model.backbone, 'fpn') and hasattr(masked_model.backbone.fpn, 'layer_blocks'):
+        for layer_block in masked_model.backbone.fpn.layer_blocks:
+            # layer_block là BottleneckFPNBlock -> chứa compress_layer
+            if hasattr(layer_block, 'compress_layer'):
+                m = layer_block.compress_layer
+                if m.s_mask is not None:
+                    mask = m.s_mask.mask
+                    kept = mask.sum().item()
+                    total = mask.numel()
+                    fpn_compress_rates.append(1.0 - (kept / total))
+                else:
+                    fpn_compress_rates.append(0.0)
 
-    num_classes = masked_model.fc.out_features if hasattr(masked_model, 'fc') else 1000
+    print(f"Rates extracted: Backbone={len(backbone_compress_rates)}, FPN={len(fpn_compress_rates)}")
 
-    first_layer_block = masked_model.layer1[0]
+    first_block = masked_model.backbone.body.layer1[0]
+    if hasattr(masked_model, 'roi_heads'):
+        num_classes = masked_model.roi_heads.box_predictor.cls_score.out_features
+    else:
+        num_classes = 2  # Fallback
+
     try:
-        if isinstance(first_layer_block, Bottleneck):
-            print("ResNet50")
-            lean_model = resnet_50(compress_rate=compress_rates, num_classes=num_classes)
-        elif isinstance(first_layer_block, BasicBlock):
-            print("ResNet18")
-            # FIX NUMCLASS = 2
-            lean_model = resnet_18(compress_rate=compress_rates, num_classes=2)
+        if isinstance(first_block, Bottleneck):
+            print("Detected ResNet50 Architecture")
+            lean_model = fasterrcnn_resnet50_fpn(
+                num_classes=num_classes,
+                compress_rate=backbone_compress_rates,
+                fpn_compress_rate=fpn_compress_rates
+            )
+        elif isinstance(first_block, BasicBlock):
+            print("Detected ResNet18 Architecture")
+            lean_model = fasterrcnn_resnet18_fpn(
+                num_classes=num_classes,
+                compress_rate=backbone_compress_rates,
+                fpn_compress_rate=fpn_compress_rates
+            )
         else:
-            raise ValueError(f"Unknown block type: {type(first_layer_block)}")
-
+            print("Unknown architecture!")
+            return None
     except Exception as e:
         print(f"Error creating lean model: {e}")
         return None
 
-    print("Copying weights based on masks...")
-
-    def get_layer(model, name):
-        return dict(model.named_modules())[name]
-
     lean_state_dict = lean_model.state_dict()
     masked_state_dict = masked_model.state_dict()
 
-    for name, param in lean_model.named_parameters():
+    for name, lean_param in lean_state_dict.items():
         if name not in masked_state_dict:
             continue
 
         masked_param = masked_state_dict[name]
         module_name = ".".join(name.split(".")[:-1])
 
-        lean_module = get_layer(lean_model, module_name)
+        if "fpn.layer_blocks" in name:
+            block_name = ".".join(module_name.split(".")[:-1])
+            masked_block = get_layer(masked_model, block_name)
 
-        if isinstance(lean_module, nn.Conv2d):
-            if param.shape == masked_param.shape:
-                param.data.copy_(masked_param.data)
+            if "compress_layer" in name and "conv" in name:
+                pass
+
+            elif "dw_conv" in name:
+                out_idx = get_kept_indices(masked_block.compress_layer)
+                if out_idx is not None:
+                    if lean_param.shape[0] == len(out_idx):
+                        lean_param.data.copy_(masked_param.data[out_idx, :, :, :])
+                    else:
+                        # Fallback an toàn
+                        lean_param.data.copy_(masked_param.data[:lean_param.shape[0]])
+                else:
+                    lean_param.data.copy_(masked_param.data)
                 continue
 
+            elif "dw_bn" in name:
+                out_idx = get_kept_indices(masked_block.compress_layer)
+                if out_idx is not None and lean_param.shape[0] == len(out_idx):
+                    lean_param.data.copy_(masked_param.data[out_idx])
+                else:
+                    lean_param.data.copy_(masked_param.data[:lean_param.shape[0]])
+                continue
+
+            elif "expand_conv" in name:
+                out_idx = get_kept_indices(masked_block.compress_layer)
+                if out_idx is not None and lean_param.shape[1] == len(out_idx):
+                    lean_param.data.copy_(masked_param.data[:, out_idx, :, :])
+                else:
+                    lean_param.data.copy_(masked_param.data[:, :lean_param.shape[1], :, :])
+                continue
+
+        lean_module = get_layer(lean_model, module_name)
+
+        if lean_param.shape == masked_param.shape:
+            lean_param.data.copy_(masked_param.data)
+            continue
+
+        if isinstance(lean_module, nn.Conv2d):
             parent_name = ".".join(module_name.split(".")[:-1])
             parent_masked_module = get_layer(masked_model, parent_name)
 
             out_idx = get_kept_indices(parent_masked_module)
 
-            if out_idx is not None and len(out_idx) == param.shape[0]:
+            if out_idx is not None and len(out_idx) == lean_param.shape[0]:
                 w_temp = masked_param.data[out_idx, :, :, :]
 
-                if param.shape[1] < masked_param.shape[1]:
-                    param.data.copy_(w_temp[:, :param.shape[1], :, :])
+                if lean_param.shape[1] < masked_param.shape[1]:
+                    lean_param.data.copy_(w_temp[:, :lean_param.shape[1], :, :])
                 else:
-                    param.data.copy_(w_temp)
+                    lean_param.data.copy_(w_temp)
             else:
-                print(f"Shape mismatch heavy at {name}: {param.shape} vs {masked_param.shape}. Slicing...")
-                param.data.copy_(masked_param.data[:param.shape[0], :param.shape[1], :, :])
+                # Fallback: Slice góc trái trên
+                print(f"Warning: Slicing weights for {name}")
+                lean_param.data.copy_(masked_param.data[:lean_param.shape[0], :lean_param.shape[1], :, :])
 
+        # Case 3: BatchNorm
         elif isinstance(lean_module, nn.BatchNorm2d):
             parent_name = ".".join(module_name.split(".")[:-1])
             parent_masked_module = get_layer(masked_model, parent_name)
             out_idx = get_kept_indices(parent_masked_module)
 
-            if out_idx is not None and len(out_idx) == param.shape[0]:
-                param.data.copy_(masked_param.data[out_idx])
+            if out_idx is not None and len(out_idx) == lean_param.shape[0]:
+                lean_param.data.copy_(masked_param.data[out_idx])
             else:
-                param.data.copy_(masked_param.data[:param.shape[0]])
-
-        else:
-            if param.shape == masked_param.shape:
-                param.data.copy_(masked_param.data)
+                lean_param.data.copy_(masked_param.data[:lean_param.shape[0]])
 
     if save_path:
+        # Save Model
         torch.save(lean_model.state_dict(), save_path)
-        import json
-        with open(save_path.replace('.pth', '.json'), 'w') as f:
-            json.dump(compress_rates, f)
+
+        # Save Config JSON (Format mới)
+        config_data = {
+            'backbone': backbone_compress_rates,
+            'fpn': fpn_compress_rates
+        }
+        json_path = save_path.replace('.pth', '.json')
+        with open(json_path, 'w') as f:
+            json.dump(config_data, f)
+        print(f"Lean config saved to: {json_path}")
 
     print(f"Surgery Completed. Lean model saved to {save_path}")
     return lean_model
