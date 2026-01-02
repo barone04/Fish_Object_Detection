@@ -7,13 +7,11 @@ from data.fish_det_dataset import FishDetectionDataset, collate_fn
 from data import presets
 from models.faster_rcnn import fasterrcnn_resnet50_fpn, fasterrcnn_resnet18_fpn
 import types
-
 from pruning.songhan_pruner import UnstructuredPruner
 from pruning.filter_pruner import StructuredPruner
 from pruning import surgery
 
 import torch.multiprocessing
-
 torch.multiprocessing.set_sharing_strategy('file_system')
 
 
@@ -46,23 +44,19 @@ def get_args_parser():
     return parser
 
 
-# Trích xuất layer từ IntermediateLayerGetter
-# def get_prunable_layers_wrapper(self, pruning_type="unstructured"):
-#     convs = []
-#     # 1. Stem (conv1)
-#     if hasattr(self, 'conv1'):
-#         convs.append(self.conv1)
-#
-#     # 2. Các Stage (layer1 -> layer4)
-#     # IntermediateLayerGetter chứa các layer dưới dạng thuộc tính
-#     for layer_name in ['layer1', 'layer2', 'layer3', 'layer4']:
-#         if hasattr(self, layer_name):
-#             stage = getattr(self, layer_name)
-#             for block in stage:
-#                 # Gọi đệ quy vào từng block (Bottleneck)
-#                 if hasattr(block, 'get_prunable_layers'):
-#                     convs.extend(block.get_prunable_layers(pruning_type))
-#     return convs
+class LayerProvider:
+    """
+    Class này giả lập behavior của Model.
+    Khi Pruner gọi .get_prunable_layers(), nó sẽ trả về list layers chúng ta đã chọn sẵn.
+    """
+
+    def __init__(self, layers):
+        self.layers = layers
+
+    def get_prunable_layers(self, pruning_type="unstructured"):
+        return self.layers
+
+
 def get_prunable_layers_wrapper(self, pruning_type="unstructured"):
     convs = []
 
@@ -109,29 +103,31 @@ def main(args):
     else:
         model = fasterrcnn_resnet18_fpn(num_classes=2)
 
-    checkpoint = torch.load(args.checkpoint, map_location='cpu', weights_only=False)
+    checkpoint = torch.load(args.checkpoint, map_location='cpu')
     if 'model' in checkpoint: checkpoint = checkpoint['model']
-    model.load_state_dict(checkpoint)
+    model.load_state_dict(checkpoint, strict=False)
     model.to(device)
 
+    # --- LOGIC CHỌN LAYER ---
     prunable_layers = []
 
+    # 1. Backbone
     if not args.freeze_backbone:
         backbone_module = model.backbone.body
         if hasattr(backbone_module, 'get_prunable_layers_wrapper'):
-            # Gọi wrapper của bạn
             backbone_module.get_prunable_layers = types.MethodType(get_prunable_layers_wrapper, backbone_module)
             prunable_layers.extend(backbone_module.get_prunable_layers())
         elif hasattr(backbone_module, 'get_prunable_layers'):
             prunable_layers.extend(backbone_module.get_prunable_layers())
-        print(f"Added Backbone layers. Total: {len(prunable_layers)}")
+        print(f"Added Backbone layers. Current Total: {len(prunable_layers)}")
 
+    # 2. FPN
     if args.prune_fpn:
         if hasattr(model.backbone, 'fpn') and hasattr(model.backbone.fpn, 'layer_blocks'):
             for block in model.backbone.fpn.layer_blocks:
                 if hasattr(block, 'get_prunable_layers'):
                     prunable_layers.extend(block.get_prunable_layers())
-            print(f"Added FPN layers. Total: {len(prunable_layers)}")
+            print(f"Added FPN layers. Current Total: {len(prunable_layers)}")
         else:
             print("Warning: --prune-fpn set but FPN modules not found or not prunable!")
 
@@ -139,11 +135,12 @@ def main(args):
         print("Error: No layers selected for pruning! Check --prune-fpn or --freeze-backbone flags.")
         return
 
-    # Gán vào Pruner
-    u_pruner = UnstructuredPruner(None)
-    u_pruner.layers = prunable_layers
-    s_pruner = StructuredPruner(None)
-    s_pruner.layers = prunable_layers
+    # Thay vì truyền None, ta truyền một object "Fake" cung cấp layers
+    provider = LayerProvider(prunable_layers)
+
+    u_pruner = UnstructuredPruner(provider)
+    s_pruner = StructuredPruner(provider)
+    # ---------------------
 
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(params, lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
@@ -160,11 +157,9 @@ def main(args):
 
         current_sparsity = args.target_sparsity * (i + 1) / args.prune_iters
 
-        # Sensitivity tăng dần (ví dụ từ 0.2 lên 1.0)
-        # Heuristic: sensitivity ~ 2 * current_sparsity
         sensitivity = 2.0 * current_sparsity
+        # Bây giờ hàm prune sẽ gọi provider.get_prunable_layers() -> Trả về list đúng
         u_pruner.prune(sensitivity=sensitivity)
-
         s_pruner.prune(prune_ratio=current_sparsity)
 
         print(f"Finetuning for {args.finetune_epochs} epochs...")
@@ -177,9 +172,9 @@ def main(args):
     print("\n--- Performing Model Surgery ---")
     save_path = os.path.join(args.output_dir, "model_lean.pth")
 
-    lean_backbone = surgery.convert_to_lean_model(model, save_path)
+    lean_model = surgery.convert_to_lean_model(model, save_path)
 
-    if lean_backbone is not None:
+    if lean_model is not None:
         print("Surgery Successful!")
         print(f"Lean Backbone saved to: {save_path}")
         print(f"Configuration saved to: {save_path.replace('.pth', '.json')}")
