@@ -9,9 +9,9 @@ from engines import trainer_det, utils as engine_utils
 from data.fish_det_dataset import FishDetectionDataset, collate_fn
 from data import presets
 from models.faster_rcnn import fasterrcnn_resnet50_fpn, fasterrcnn_resnet18_fpn
-from models.conv_bn_relu import MaskProxy, UnstructuredMask, StructuredMask  # <--- Import thêm class này
+# IMPORT QUAN TRỌNG: Lấy class gốc để check instance
+from models.conv_bn_relu import ConvBNReLU, MaskProxy, UnstructuredMask, StructuredMask
 
-# Import Pruning Modules
 from pruning.songhan_pruner import UnstructuredPruner
 from pruning.filter_pruner import StructuredPruner
 from pruning import surgery
@@ -21,8 +21,8 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 
 def get_args_parser():
     parser = argparse.ArgumentParser(description="Pruning Detection (Pipeline 2)")
-    # Dataset & Model
     parser.add_argument("--data-path", default="./NewDeepfish/NewDeepfish", type=str)
+    # Chọn Model
     parser.add_argument("--model", default="fasterrcnn_resnet50_fpn", type=str)
     parser.add_argument("--device", default="cuda", type=str)
     parser.add_argument("--checkpoint", required=True, type=str,
@@ -41,18 +41,14 @@ def get_args_parser():
     parser.add_argument("--finetune-epochs", default=3, type=int)
     parser.add_argument("--output-dir", default="./output/pipeline2_pruned", type=str)
 
+    # Flags chọn vùng prune
     parser.add_argument("--prune-fpn", action="store_true", help="Enable pruning for FPN layers")
     parser.add_argument("--freeze-backbone", action="store_true", help="Case 2: Freeze backbone")
     return parser
 
 
-# --- CLASS QUAN TRỌNG ĐÃ ĐƯỢC NÂNG CẤP ---
+# --- CLASS PROVIDER (Đã fix lỗi NoneType Mask) ---
 class LayerProvider:
-    """
-    Cung cấp layers cho Pruner dưới dạng MaskProxy.
-    Tự động khởi tạo Mask nếu chưa có.
-    """
-
     def __init__(self, layers, device):
         self.layers = layers
         self.device = device
@@ -60,34 +56,41 @@ class LayerProvider:
     def get_prunable_layers(self, pruning_type="unstructured"):
         proxies = []
         for layer in self.layers:
-            # 1. LAZY INITIALIZATION: Tạo mask nếu chưa có
+            # Check kỹ lần cuối để đảm bảo an toàn
+            if not isinstance(layer, ConvBNReLU):
+                continue
+
+            # 1. LAZY INIT: Chỉ tạo mask khi chưa có
             if pruning_type == "unstructured":
                 if layer.u_mask is None:
-                    # Tạo mask unstructured (cùng shape với weight)
                     layer.u_mask = UnstructuredMask(layer.weight.shape).to(self.device)
-
             elif pruning_type == "structured" or pruning_type == "filter":
                 if layer.s_mask is None:
-                    # Tạo mask structured (độ dài bằng số output channels)
                     layer.s_mask = StructuredMask(layer.out_channels).to(self.device)
 
-            # 2. WRAPPING: Bọc layer vào Proxy để có attribute 'mask_handler'
+            # 2. WRAP: Đóng gói vào Proxy
             proxies.append(MaskProxy(layer, pruning_type))
 
         return proxies
 
 
-# Helper function để đệ quy tìm layer trong Backbone/FPN
-def get_prunable_layers_recursive(module, prefix=""):
+# --- HÀM THU THẬP LAYER (Đã fix logic đệ quy) ---
+def get_prunable_layers_recursive(module):
+    """
+    Hàm này duyệt cây module.
+    - Nếu gặp ConvBNReLU -> Lấy ngay.
+    - Nếu gặp Container (Bottleneck, BasicBlock, Sequential...) -> Đào tiếp vào con.
+    """
     convs = []
-    # Nếu bản thân module là ConvBNReLU (đã được sửa trong code model)
-    if hasattr(module, 'get_prunable_layers'):
-        # Lưu ý: method này của layer trả về chính nó, ta gom lại để xử lý sau
+
+    # ĐIỂM SỬA QUAN TRỌNG NHẤT: Dùng isinstance thay vì hasattr
+    if isinstance(module, ConvBNReLU):
         convs.append(module)
 
-    # Nếu không, duyệt con
-    for name, child in module.named_children():
-        convs.extend(get_prunable_layers_recursive(child, prefix + name + "."))
+    # Luôn luôn duyệt con (để tìm ConvBNReLU lẩn trốn bên trong Container)
+    # Lưu ý: ConvBNReLU không có con nào cần duyệt nữa nên logic này an toàn
+    for child in module.children():
+        convs.extend(get_prunable_layers_recursive(child))
 
     return convs
 
@@ -113,6 +116,7 @@ def main(args):
     )
 
     print(f"Loading Dense Model from {args.checkpoint}...")
+    # Khởi tạo đúng loại model
     if args.model == 'fasterrcnn_resnet50_fpn':
         model = fasterrcnn_resnet50_fpn(num_classes=2)
     else:
@@ -120,33 +124,40 @@ def main(args):
 
     checkpoint = torch.load(args.checkpoint, map_location='cpu')
     if 'model' in checkpoint: checkpoint = checkpoint['model']
-    # Load strict=False để tránh lỗi nếu có sự khác biệt nhỏ về buffer mask cũ
     model.load_state_dict(checkpoint, strict=False)
     model.to(device)
 
     # --- THU THẬP LAYER ---
     prunable_layers = []
 
-    # 1. Backbone
+    # 1. Thu thập từ Backbone
     if not args.freeze_backbone:
         print("Collecting Backbone layers...")
+        # Gọi hàm đệ quy mới vào phần body
         backbone_layers = get_prunable_layers_recursive(model.backbone.body)
         prunable_layers.extend(backbone_layers)
 
-    # 2. FPN
+    # 2. Thu thập từ FPN
     if args.prune_fpn:
         print("Collecting FPN layers...")
         if hasattr(model.backbone, 'fpn'):
             fpn_layers = get_prunable_layers_recursive(model.backbone.fpn)
             prunable_layers.extend(fpn_layers)
 
-    print(f"Total prunable layers found: {len(prunable_layers)}")
+    # Log kiểm tra
+    print(f"Total ConvBNReLU layers found: {len(prunable_layers)}")
+
+    # Kiểm tra sanity check (Debug)
+    for i, l in enumerate(prunable_layers):
+        if not isinstance(l, ConvBNReLU):
+            print(f"CRITICAL ERROR: Layer {i} is NOT ConvBNReLU! It is {type(l)}")
+            return  # Dừng ngay lập tức nếu sai
+
     if len(prunable_layers) == 0:
-        print("Error: No layers selected! Check your model structure or flags.")
+        print("Error: No layers selected! Check --prune-fpn or --freeze-backbone.")
         return
 
-    # --- KHỞI TẠO PRUNER VỚI PROVIDER MỚI ---
-    # Provider sẽ tự động khởi tạo mask và bọc Proxy
+    # --- SETUP PRUNER ---
     provider = LayerProvider(prunable_layers, device)
 
     u_pruner = UnstructuredPruner(provider)
@@ -168,7 +179,7 @@ def main(args):
         current_sparsity = args.target_sparsity * (i + 1) / args.prune_iters
         sensitivity = 2.0 * current_sparsity
 
-        # Pruning
+        # Gọi Prune (sẽ qua Provider -> Proxy -> Mask)
         u_pruner.prune(sensitivity=sensitivity)
         s_pruner.prune(prune_ratio=current_sparsity)
 
@@ -181,8 +192,9 @@ def main(args):
 
     print("\n--- Performing Model Surgery ---")
     save_path = os.path.join(args.output_dir, "model_lean.pth")
-    lean_model = surgery.convert_to_lean_model(model,
-                                               save_path)  # Lưu ý: truyền 'model' chứ không phải 'backbone_module'
+
+    # Gọi Surgery
+    lean_model = surgery.convert_to_lean_model(model, save_path)
 
     if lean_model is not None:
         print("Surgery Successful!")

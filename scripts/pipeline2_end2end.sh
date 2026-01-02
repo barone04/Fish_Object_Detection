@@ -30,10 +30,9 @@ python train_det.py \
 # ---------------------------------------------------------
 # BƯỚC 2: Pruning Loop
 # --checkpoint $OUTPUT_ROOT/step1_dense_det/model_best.pth \
-# --checkpoint ./output/step_1_dense_model/model_best.pth \
+# --checkpoint ./output/pipeline2_fpn/resnet18-fpn/step1_dense_det/model_best.pth \
 # ---------------------------------------------------------
 echo "[Step 2/3] Iterative Pruning (SongHan + Filter)..."
-# Lưu ý: Script này sẽ tự động gọi Surgery ở cuối để tạo model_lean.pth
 python prune_det.py \
     --data-path $DATA_ROOT \
     --model $MODEL \
