@@ -9,7 +9,8 @@ from models.faster_rcnn import fasterrcnn_resnet18_fpn, fasterrcnn_resnet50_fpn
 
 
 def get_kept_indices(mask_handler):
-    if mask_handler is None or mask_handler.s_mask is None:
+    # FIX: nhiều module không có s_mask (ModuleList, BottleneckFPNBlock, Conv2d/BN thuần...)
+    if mask_handler is None or (not hasattr(mask_handler, "s_mask")) or mask_handler.s_mask is None:
         return None
     mask = mask_handler.s_mask.mask
     indices = torch.nonzero(mask).squeeze()
@@ -131,6 +132,14 @@ def convert_to_lean_model(masked_model, save_path=None):
 
         masked_param = masked_state_dict[name]
 
+        # DEBUG 1: log các param "đáng ngờ"
+        if "layer1.0.conv1" in name or "fpn" in name:
+            print(f"[DEBUG-PARAM] {name} | "
+                  f"lean_shape={tuple(lean_param.shape)} | "
+                  f"masked_shape={tuple(masked_param.shape)} | "
+                  f"dim={lean_param.dim()}")
+
+
         # --- FIX 1: SCALAR PROTECTION (Chống lỗi num_batches_tracked) ---
         if lean_param.dim() == 0:
             lean_param.data.copy_(masked_param.data)
@@ -141,6 +150,9 @@ def convert_to_lean_model(masked_model, save_path=None):
 
         # A. FPN HANDLING
         if "fpn.layer_blocks" in name:
+            print(f"[DEBUG-FPN] {name} | lean={tuple(lean_param.shape)} "
+                  f"| masked={tuple(masked_param.shape)}")
+
             block_name = ".".join(module_name.split(".")[:-1])
             masked_block = get_layer(masked_model, block_name)
 
@@ -158,6 +170,11 @@ def convert_to_lean_model(masked_model, save_path=None):
                     lean_param.data.copy_(masked_param.data)
                 continue
             elif "dw_bn" in name:
+                # FIX FINAL: num_batches_tracked là scalar (0D) -> copy thẳng, không được dùng shape[0]
+                if lean_param.dim() == 0:
+                    lean_param.data.copy_(masked_param.data)
+                    continue
+
                 out_idx = get_kept_indices(masked_block.compress_layer)
                 if out_idx is not None and lean_param.shape[0] == len(out_idx):
                     lean_param.data.copy_(masked_param.data[out_idx])
@@ -170,6 +187,10 @@ def convert_to_lean_model(masked_model, save_path=None):
                     lean_param.data.copy_(masked_param.data[:, out_idx, :, :])
                 else:
                     lean_param.data.copy_(masked_param.data[:, :lean_param.shape[1], :, :])
+                continue
+            elif "expand_bn" in name:
+                # expand_bn không prune theo compress_layer -> copy thẳng
+                lean_param.data.copy_(masked_param.data)
                 continue
 
         # B. STANDARD CONV/BN HANDLING
@@ -198,6 +219,11 @@ def convert_to_lean_model(masked_model, save_path=None):
             if lean_param.shape[1] < masked_param.shape[1]:
                 # --- FIX 2: TOPOLOGY AWARE INPUT MASK ---
                 in_idx = get_input_mask_resnet(masked_model, name)
+
+                if in_idx is None and lean_param.shape[1] < masked_param.shape[1]:
+                    print(f"[DEBUG-IN-MASK-MISSING] {name} | "
+                          f"expected_in={lean_param.shape[1]} | "
+                          f"masked_in={masked_param.shape[1]}")
 
                 if in_idx is not None and len(in_idx) == lean_param.shape[1]:
                     lean_param.data.copy_(w_temp[:, in_idx, :, :])
