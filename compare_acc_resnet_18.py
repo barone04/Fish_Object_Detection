@@ -10,26 +10,25 @@ from data import presets
 from models.faster_rcnn import fasterrcnn_resnet18_fpn
 
 # ======================================================================================
-#                                   PHẦN CẤU HÌNH (SỬA TẠI ĐÂY)
+#                                   PHẦN CẤU HÌNH
 # ======================================================================================
 
 # 1. Đường dẫn Dataset
 DATA_PATH = "./NewDeepfish/NewDeepfish"
 
 # 2. Đường dẫn Model Step 1 (Dense - Chưa cắt)
-DENSE_MODEL_PATH = "./output/pipeline2/step1_dense_det/model_best.pth"
+DENSE_MODEL_PATH = "output/pipeline2_fpn/step1_dense_det/model_best.pth"
 
 # 3. Đường dẫn Model Step 3 (Pruned - Đã cắt và finetune)
-PRUNED_MODEL_PATH = "./output/pipeline2/step3_final_result/model_best.pth"
+PRUNED_MODEL_PATH = "output/pipeline2_fpn/step3_final_result/model_best.pth"
 
 # 4. Đường dẫn file Config JSON (Sinh ra ở Step 2)
-# Lưu ý: File này chứa tỷ lệ cắt để khởi tạo khung mạng cho model pruned
-PRUNED_CONFIG_PATH = "./output/pipeline2/step2_pruned_det/backbone_lean.json"
+PRUNED_CONFIG_PATH = "output/pipeline2_fpn/step2_pruned_det/model_lean.json"
 
 # 5. Các cài đặt khác
 NUM_CLASSES = 2  # Background + Fish
-DEVICE = 'cuda'  # hoặc 'cpu'
-BATCH_SIZE = 8  # Batch size khi test (có thể tăng lên 16 nếu VRAM đủ)
+DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+BATCH_SIZE = 8
 NUM_WORKERS = 4
 
 
@@ -43,38 +42,60 @@ def load_model_resnet18(checkpoint_path, config_json_path=None, num_classes=2, d
     """
     print(f"\n[{'PRUNED' if config_json_path else 'DENSE'}] Loading from: {checkpoint_path}")
 
-    # 1. Load Config cắt tỉa (nếu có)
-    compress_rate_list = None
+    # --- 1. Load Config cắt tỉa (SỬA LOGIC TẠI ĐÂY) ---
+    backbone_rates = None
+    fpn_rates = None
+
     if config_json_path:
         if os.path.exists(config_json_path):
             print(f"   -> Found pruning config: {config_json_path}")
             with open(config_json_path, 'r') as f:
-                compress_rate_list = json.load(f)
+                config_data = json.load(f)
+
+            # Tách config Backbone và FPN
+            if isinstance(config_data, dict):
+                # Format mới: {'backbone': [...], 'fpn': [...]}
+                backbone_rates = config_data.get('backbone')
+                fpn_rates = config_data.get('fpn')
+                print(f"   -> Config loaded: Backbone ({len(backbone_rates)} layers), FPN ({len(fpn_rates)} layers)")
+            elif isinstance(config_data, list):
+                # Format cũ: [...]
+                backbone_rates = config_data
+                fpn_rates = None
+                print(f"   -> Config loaded (Old format): Backbone ({len(backbone_rates)} layers)")
         else:
             print(f"   -> WARNING: Config file not found at {config_json_path}")
 
-    # 2. Khởi tạo kiến trúc mạng (Backbone)
-    # Lưu ý: Gọi đúng hàm fasterrcnn_resnet18_fpn
+    # --- 2. Khởi tạo kiến trúc mạng ---
+    # SỬA: Truyền thêm fpn_compress_rate
     model = fasterrcnn_resnet18_fpn(
         num_classes=num_classes,
-        compress_rate=compress_rate_list,
+        compress_rate=backbone_rates,  # List tỉ lệ backbone
+        fpn_compress_rate=fpn_rates,  # List tỉ lệ FPN
         weights_backbone=None
     )
 
-    # 3. Load Trọng số (Weights)
+    # --- 3. Load Trọng số (Weights) ---
     if os.path.exists(checkpoint_path):
-        checkpoint = torch.load(checkpoint_path, map_location='cpu')
-
-        # Xử lý key bọc ngoài (thường là 'model' hoặc 'state_dict')
-        if 'model' in checkpoint:
-            state_dict = checkpoint['model']
-        elif 'state_dict' in checkpoint:
-            state_dict = checkpoint['state_dict']
-        else:
-            state_dict = checkpoint
-
-        # Load vào model
         try:
+            # Fix warning weights_only trên pytorch mới
+            try:
+                checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+            except TypeError:
+                checkpoint = torch.load(checkpoint_path, map_location='cpu')
+
+            # Xử lý key bọc ngoài
+            if isinstance(checkpoint, dict):
+                if 'model' in checkpoint:
+                    state_dict = checkpoint['model']
+                elif 'state_dict' in checkpoint:
+                    state_dict = checkpoint['state_dict']
+                else:
+                    state_dict = checkpoint
+            else:
+                state_dict = checkpoint
+
+            # Load vào model
             model.load_state_dict(state_dict, strict=False)
             print("   -> Weights loaded successfully.")
         except Exception as e:
@@ -93,19 +114,19 @@ def evaluate_performance(model, data_loader, device):
     print("   -> Starting Evaluation...")
     t0 = time.time()
 
-    # Sử dụng hàm evaluate có sẵn trong trainer_det của bạn
+    # Sử dụng hàm evaluate có sẵn trong trainer_det
+    # Lưu ý: cần đảm bảo hàm này trả về CocoEvaluator
     coco_evaluator = trainer_det.evaluate(model, data_loader, device=device)
 
     t1 = time.time()
     eval_time = t1 - t0
 
-    # Trích xuất chỉ số mAP
-    # stats[0] = mAP @ 0.50:0.95
-    # stats[1] = mAP @ 0.50
     map_standard = 0.0
     map_50 = 0.0
 
     if coco_evaluator is not None and hasattr(coco_evaluator, 'coco_eval'):
+        # stats[0] = mAP @ 0.50:0.95
+        # stats[1] = mAP @ 0.50
         stats = coco_evaluator.coco_eval['bbox'].stats
         map_standard = stats[0]
         map_50 = stats[1]
@@ -121,27 +142,30 @@ def main():
 
     # 1. Chuẩn bị Dữ liệu (Chỉ tập Validation)
     print("1. Preparing Data...")
-    dataset_test = FishDetectionDataset(DATA_PATH, split='val', transforms=presets.DetectionPresetEval())
-    test_sampler = torch.utils.data.SequentialSampler(dataset_test)
+    try:
+        dataset_test = FishDetectionDataset(DATA_PATH, split='val', transforms=presets.DetectionPresetEval())
+        test_sampler = torch.utils.data.SequentialSampler(dataset_test)
 
-    data_loader_test = torch.utils.data.DataLoader(
-        dataset_test, batch_size=BATCH_SIZE, sampler=test_sampler,
-        num_workers=NUM_WORKERS, collate_fn=collate_fn
-    )
-    print(f"   -> Found {len(dataset_test)} validation images.")
+        data_loader_test = torch.utils.data.DataLoader(
+            dataset_test, batch_size=BATCH_SIZE, sampler=test_sampler,
+            num_workers=NUM_WORKERS, collate_fn=collate_fn
+        )
+        print(f"   -> Found {len(dataset_test)} validation images.")
+    except Exception as e:
+        print(f"Error loading dataset: {e}")
+        return
 
     # 2. Đánh giá Dense Model
     print("\n2. Evaluating DENSE Model (Step 1)...")
     model_dense = load_model_resnet18(DENSE_MODEL_PATH, config_json_path=None, num_classes=NUM_CLASSES, device=DEVICE)
     map_dense, map50_dense, time_dense = evaluate_performance(model_dense, data_loader_test, DEVICE)
 
-    # Xóa model dense để giải phóng VRAM cho model pruned
+    # Xóa model dense để giải phóng VRAM
     del model_dense
     torch.cuda.empty_cache()
 
     # 3. Đánh giá Pruned Model
     print("\n3. Evaluating PRUNED Model (Step 3)...")
-    # Lưu ý: Bắt buộc phải truyền PRUNED_CONFIG_PATH để model khởi tạo đúng cấu trúc nhỏ gọn
     model_pruned = load_model_resnet18(PRUNED_MODEL_PATH, config_json_path=PRUNED_CONFIG_PATH, num_classes=NUM_CLASSES,
                                        device=DEVICE)
     map_pruned, map50_pruned, time_pruned = evaluate_performance(model_pruned, data_loader_test, DEVICE)
@@ -159,19 +183,19 @@ def main():
     diff_map50 = map50_pruned - map50_dense
     print(f"{'mAP @ 0.50':<20} | {map50_dense:.4f}{' ' * 16} | {map50_pruned:.4f}{' ' * 16} | {diff_map50:+.4f}")
 
-    # So sánh thời gian (tham khảo)
+    # So sánh thời gian
     diff_time = time_pruned - time_dense
     print(f"{'Eval Time (s)':<20} | {time_dense:.1f}s{' ' * 15} | {time_pruned:.1f}s{' ' * 15} | {diff_time:+.1f}s")
 
     print("-" * 80)
 
     # Kết luận nhanh
-    if diff_map >= -0.02:  # Giảm ít hơn 2%
+    if diff_map >= -0.02:
         print(">> KẾT LUẬN: Pruning thành công! mAP được giữ vững.")
     elif diff_map >= -0.05:
         print(">> KẾT LUẬN: Chấp nhận được. mAP giảm nhẹ.")
     else:
-        print(">> KẾT LUẬN: Cảnh báo! mAP giảm nhiều, cần train Step 3 lâu hơn hoặc giảm tỷ lệ cắt.")
+        print(">> KẾT LUẬN: Cảnh báo! mAP giảm nhiều, cần kiểm tra lại quá trình Finetuning.")
     print("=" * 80 + "\n")
 
 
