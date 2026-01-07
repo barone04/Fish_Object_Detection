@@ -6,7 +6,7 @@ DATA_ROOT="./NewDeepfish/NewDeepfish"
 OUTPUT_ROOT="./output/pipeline2"
 BATCH_SIZE=8
 WORKERS=16
-MODEL="fasterrcnn_resnet18_fpn"
+MODEL="mobilenet_v3"
 
 echo "======================================================="
 echo "STARTING PIPELINE 2: END-TO-END DETECTION PRUNING"
