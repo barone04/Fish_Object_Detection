@@ -25,12 +25,13 @@ python train_det.py \
     --batch-size $BATCH_SIZE \
     --workers $WORKERS \
     --lr 0.01 \
+    --box-head-dim 256 \
     --output-dir $OUTPUT_ROOT/step1_dense_det
 
 # ---------------------------------------------------------
 # BƯỚC 2: Pruning Loop
 # --checkpoint $OUTPUT_ROOT/step1_dense_det/model_best.pth \
-# --checkpoint ./output/pipeline2_fpn/resnet18-fpn/step1_dense_det/model_best.pth \
+# --checkpoint ./output/prune_fpn_resnet18/resnet18-fpn/step1_dense_det/model_best.pth \
 # ---------------------------------------------------------
 echo "[Step 2/3] Iterative Pruning (SongHan + Filter)..."
 python prune_det.py \
@@ -42,6 +43,7 @@ python prune_det.py \
     --finetune-epochs 10 \
     --batch-size $BATCH_SIZE \
     --output-dir $OUTPUT_ROOT/step2_pruned_det \
+    --box-head-dim 256 \
     --prune-fpn # Thực hiện prune FPN (nếu không muốn prune chỉ cần comment/delete)
 
 # ---------------------------------------------------------
@@ -58,6 +60,7 @@ python train_det.py \
     --workers $WORKERS \
     --lr 0.02 \
     --lr-steps 100 130 \
+    --box-head-dim 256 \
     --output-dir $OUTPUT_ROOT/step3_final_result
 
 echo "======================================================="
