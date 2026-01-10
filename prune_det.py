@@ -134,7 +134,7 @@ def main(args):
         print(" -> Checkpoint loaded.")
     except Exception as e:
         print(f"CRITICAL ERROR loading checkpoint: {e}")
-        return
+        raise SystemExit(1)
 
     model.to(device)
 
@@ -154,7 +154,7 @@ def main(args):
     print(f"Total ConvBNReLU layers found: {len(prunable_layers)}")
     if len(prunable_layers) == 0:
         print("Error: No layers selected!")
-        return
+        raise SystemExit(1)
 
     provider = LayerProvider(prunable_layers, device)
     u_pruner = UnstructuredPruner(provider)

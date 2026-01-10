@@ -307,8 +307,9 @@ def main(args):
         model = fasterrcnn_mobilenetv3_custom(
             num_classes=2,
             fpn_compress_rate=fpn_rates,
-            # Nếu có weights_backbone (Step 3 - lean model), ta không cần pretrain mặc định
-            pretrained_backbone=(args.weights_backbone is None)
+            pretrained_backbone=(args.weights_backbone is None),
+            freeze_backbone=True,
+            box_head_dim=args.box_head_dim,
         )
 
         # [QUAN TRỌNG] Manual Load Weights cho MobileNet (Step 3)

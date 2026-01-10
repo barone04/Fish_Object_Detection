@@ -39,8 +39,8 @@ python prune_det.py \
     --model $MODEL \
     --checkpoint $OUTPUT_ROOT/step1_dense_det/model_best.pth \
     --target-sparsity 0.5 \
-    --prune-iters 8 \
-    --finetune-epochs 10 \
+    --prune-iters 2 \
+    --finetune-epochs 3 \
     --batch-size $BATCH_SIZE \
     --output-dir $OUTPUT_ROOT/step2_pruned_det \
     --box-head-dim 256 \
