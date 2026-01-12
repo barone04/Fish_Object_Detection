@@ -300,7 +300,6 @@ def main(args):
         else:
             print(f"Warning: Config file {args.compress_rate} not found. Ignoring.")
 
-    # --- 2. INIT MODEL ---
     if args.model == 'mobilenet_v3':
         print(" -> Using MobileNetV3 Large (Backbone Frozen, FPN Prunable)")
         # MobileNet init
