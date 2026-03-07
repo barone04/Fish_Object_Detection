@@ -50,7 +50,10 @@ def get_args_parser():
 
     parser.add_argument("--prune-fpn", action="store_true")
     parser.add_argument("--freeze-backbone", action="store_true")
-
+    parser.add_argument("--min-size", default=800, type=int,
+                        help="Minimum size of the image to be rescaled before feeding it to the backbone")
+    parser.add_argument("--max-size", default=1333, type=int,
+                        help="Max size of the image to be rescaled before feeding it to the backbone")
     # để builder MobileNet khớp với training
     parser.add_argument("--box-head-dim", default=1024, type=int)
     return parser
@@ -117,6 +120,7 @@ def main(args):
             freeze_backbone=True,
             box_head_dim=args.box_head_dim
         )
+
     elif args.model in ("fasterrcnn_resnet50_fpn", "resnet50"):
         model = fasterrcnn_resnet50_fpn(num_classes=2)
     else:

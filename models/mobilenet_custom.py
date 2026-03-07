@@ -51,8 +51,8 @@ def fasterrcnn_mobilenetv3_custom(
     pretrained_backbone: bool = True,
     freeze_backbone: bool = True,
     fpn_out_channels: int = 256,
-    min_size: int = 800,
-    max_size: int = 1333,
+    min_size: int = 320,
+    max_size: int = 320,
     box_head_dim: int = 1024,
 ):
     weights = _mobilenet_v3_large_weights(pretrained_backbone)

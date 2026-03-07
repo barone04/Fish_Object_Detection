@@ -177,6 +177,8 @@ def convert_to_lean_model(masked_model, save_path=None):
                 pretrained_backbone=False,
                 freeze_backbone=True,
                 box_head_dim=box_head_dim,
+                min_size=320,
+                max_size=320
             )
         else:
             # GIỮ NGUYÊN LOGIC CŨ: xác định ResNet18/50 bằng type block
@@ -187,6 +189,8 @@ def convert_to_lean_model(masked_model, save_path=None):
                     num_classes=num_classes,
                     compress_rate=backbone_compress_rates,
                     fpn_compress_rate=fpn_compress_rates,
+                    min_size=320,
+                    max_size=320
                 )
             elif isinstance(first_block, BasicBlock):
                 print("Initializing Lean ResNet18...")
@@ -194,6 +198,8 @@ def convert_to_lean_model(masked_model, save_path=None):
                     num_classes=num_classes,
                     compress_rate=backbone_compress_rates,
                     fpn_compress_rate=fpn_compress_rates,
+                    min_size=320,
+                    max_size=320
                 )
             else:
                 print("Unknown architecture in ResNet branch!")

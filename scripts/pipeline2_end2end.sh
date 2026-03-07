@@ -16,6 +16,7 @@ echo "======================================================="
 # ---------------------------------------------------------
 # BƯỚC 1: Train Dense Detection Model
 # Mục tiêu: Có một mô hình Detection chuẩn (mAP cao nhất)
+# Cũ: 60 epochs
 # ---------------------------------------------------------
 echo "[Step 1/3] Training Dense Faster R-CNN..."
 python train_det.py \
@@ -26,12 +27,16 @@ python train_det.py \
     --workers $WORKERS \
     --lr 0.01 \
     --box-head-dim 256 \
+    --min-size 320 \
+    --max-size 320 \
     --output-dir $OUTPUT_ROOT/step1_dense_det
 
 # ---------------------------------------------------------
 # BƯỚC 2: Pruning Loop
 # --checkpoint $OUTPUT_ROOT/step1_dense_det/model_best.pth \
 # --checkpoint ./output/prune_fpn_resnet18/resnet18-fpn/step1_dense_det/model_best.pth \
+# prune-iters = 8
+# finetune-epochs = 10
 # ---------------------------------------------------------
 echo "[Step 2/3] Iterative Pruning (SongHan + Filter)..."
 python prune_det.py \
@@ -39,15 +44,18 @@ python prune_det.py \
     --model $MODEL \
     --checkpoint $OUTPUT_ROOT/step1_dense_det/model_best.pth \
     --target-sparsity 0.5 \
-    --prune-iters 2 \
-    --finetune-epochs 3 \
+    --prune-iters 8 \
+    --finetune-epochs 10 \
     --batch-size $BATCH_SIZE \
     --output-dir $OUTPUT_ROOT/step2_pruned_det \
     --box-head-dim 256 \
+    --min-size 320 \
+    --max-size 320 \
     --prune-fpn # Thực hiện prune FPN (nếu không muốn prune chỉ cần comment/delete)
 
 # ---------------------------------------------------------
 # BƯỚC 3: Final Finetuning
+# Cũ: 50 epochs
 # ---------------------------------------------------------
 echo "[Step 3/3] Final Finetuning..."
 python train_det.py \
@@ -61,6 +69,8 @@ python train_det.py \
     --lr 0.02 \
     --lr-steps 100 130 \
     --box-head-dim 256 \
+    --min-size 320 \
+    --max-size 320 \
     --output-dir $OUTPUT_ROOT/step3_final_result
 
 echo "======================================================="

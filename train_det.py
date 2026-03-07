@@ -243,7 +243,10 @@ def get_args_parser():
     parser.add_argument("--resume", default="", type=str, help="path to checkpoint to resume")
     parser.add_argument('--lr-steps', default=[16, 22], nargs='+', type=int, help='decrease lr every step-size epochs')
     parser.add_argument('--lr-gamma', default=0.1, type=float, help='decrease lr by a factor of lr-gamma')
-
+    parser.add_argument("--min-size", default=800, type=int,
+                        help="Minimum size of the image to be rescaled before feeding it to the backbone")
+    parser.add_argument("--max-size", default=1333, type=int,
+                        help="Max size of the image to be rescaled before feeding it to the backbone")
     # Pruning specific
     parser.add_argument("--weights", default=None, type=str, help="path to full model (finetuning dense)")
     parser.add_argument("--weights-backbone", default=None, type=str, help="path to backbone/lean model")
@@ -309,6 +312,8 @@ def main(args):
             pretrained_backbone=(args.weights_backbone is None),
             freeze_backbone=True,
             box_head_dim=args.box_head_dim,
+            min_size=args.min_size,  # Thêm dòng này
+            max_size=args.max_size  # Thêm dòng này
         )
 
         # [QUAN TRỌNG] Manual Load Weights cho MobileNet (Step 3)
@@ -329,14 +334,19 @@ def main(args):
             num_classes=2,
             weights_backbone=args.weights_backbone,  # ResNet hỗ trợ sẵn load backbone
             compress_rate=backbone_rates,
-            fpn_compress_rate=fpn_rates
+            fpn_compress_rate=fpn_rates,
+            min_size=args.min_size,  # Hàm resnet builder của bạn có **kwargs nên sẽ nhận được
+            max_size=args.max_size  # Thêm dòng này
         )
+
     elif args.model in ['fasterrcnn_resnet50_fpn', 'resnet50']:
         model = fasterrcnn_resnet50_fpn(
             num_classes=2,
             weights_backbone=args.weights_backbone,
             compress_rate=backbone_rates,
-            fpn_compress_rate=fpn_rates
+            fpn_compress_rate=fpn_rates,
+            min_size=args.min_size,  # Hàm resnet builder của bạn có **kwargs nên sẽ nhận được
+            max_size=args.max_size  # Thêm dòng này
         )
     else:
         raise ValueError(f"Unknown model name: {args.model}")
