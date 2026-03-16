@@ -96,11 +96,14 @@ def fasterrcnn_mobilenetv3_custom(
     #     sizes=((32,), (64,), (128,), (256,), (512,)),
     #     aspect_ratios=((0.5, 1.0, 2.0),) * 5
     # )
+    # anchor_generator = AnchorGenerator(
+    #     sizes=((16,), (32,), (64,), (128,), (256,)),
+    #     aspect_ratios=((0.5, 1.0, 2.0),) * 5
+    # )
     anchor_generator = AnchorGenerator(
-        sizes=((16,), (32,), (64,), (128,), (256,)),
+        sizes=((8,), (16,), (32,), (64,), (128,)),  # Thu nhỏ toàn bộ dàn anchor
         aspect_ratios=((0.5, 1.0, 2.0),) * 5
     )
-
 
     # ====== ROI Align chỉ dùng 4 maps (0..3), KHÔNG dùng pool ======
     box_roi_pool = MultiScaleRoIAlign(

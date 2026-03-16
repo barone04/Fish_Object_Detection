@@ -131,10 +131,15 @@ def _create_faster_rcnn_hybrid(backbone_body, num_classes, weights_backbone, fpn
     box_head_dim = kwargs.pop('box_head_dim', 256)
 
     # Anchor thu nhỏ lại để bắt được cá nhỏ trên ảnh 320x320
+    # anchor_generator = AnchorGenerator(
+    #     sizes=((16,), (32,), (64,), (128,), (256,)),
+    #     aspect_ratios=((0.5, 1.0, 2.0),) * 5
+    # )
     anchor_generator = AnchorGenerator(
-        sizes=((16,), (32,), (64,), (128,), (256,)),
+        sizes=((8,), (16,), (32,), (64,), (128,)),  # Thu nhỏ toàn bộ dàn anchor
         aspect_ratios=((0.5, 1.0, 2.0),) * 5
     )
+
 
     box_roi_pool = MultiScaleRoIAlign(
         featmap_names=['0', '1', '2', '3'],
