@@ -3,7 +3,6 @@ import torch
 import torch.utils.data
 from PIL import Image
 
-
 class FishDetectionDataset(torch.utils.data.Dataset):
     def __init__(self, root, split='train', transforms=None):
         """
@@ -35,7 +34,7 @@ class FishDetectionDataset(torch.utils.data.Dataset):
         img = Image.open(img_path).convert("RGB")
         w, h = img.size
 
-        # Load Label (YOLO format: class_id cx cy bw bh)
+        # Load Label
         lbl_name = os.path.splitext(img_name)[0] + ".txt"
         lbl_path = os.path.join(self.lbl_dir, lbl_name)
 
@@ -48,17 +47,27 @@ class FishDetectionDataset(torch.utils.data.Dataset):
                 for line in f:
                     data = list(map(float, line.strip().split()))
                     if len(data) >= 5:
-                        cls_id = int(data[0])  # Thường là 0 (vì dataset chỉ có 1 loại cá)
-                        cx, cy, bw, bh = data[1], data[2], data[3], data[4]
+                        cls_id = int(data[0])  # Thường là 0
+                        v1, v2, v3, v4 = data[1], data[2], data[3], data[4]
 
-                        # Convert YOLO (Center_X, Center_Y, W, H) -> COCO (X1, Y1, X2, Y2)
-                        # Tọa độ YOLO là normalized (0-1), cần nhân với w, h
-                        x1 = (cx - bw / 2) * w
-                        y1 = (cy - bh / 2) * h
-                        x2 = (cx + bw / 2) * w
-                        y2 = (cy + bh / 2) * h
+                        # =========================================================
+                        # [ĐÃ FIX] AUTO-DETECT FORMAT LABEL
+                        # =========================================================
+                        if max(v1, v2, v3, v4) <= 1.0:
+                            # TH1: Định dạng YOLO chuẩn (Deepfish cũ)
+                            # Các giá trị nằm trong khoảng [0.0 - 1.0]
+                            cx, cy, bw, bh = v1, v2, v3, v4
+                            x1 = (cx - bw / 2) * w
+                            y1 = (cy - bh / 2) * h
+                            x2 = (cx + bw / 2) * w
+                            y2 = (cy + bh / 2) * h
+                        else:
+                            # TH2: Định dạng Pixel tuyệt đối (Data mới bạn vừa up)
+                            # Label đang lưu trực tiếp là: xmin, ymin, xmax, ymax
+                            x1, y1, x2, y2 = v1, v2, v3, v4
+                        # =========================================================
 
-                        # Clip to image boundaries
+                        # Clip to image boundaries (chống văng lỗi nếu box tràn viền ảnh)
                         x1 = max(0, x1)
                         y1 = max(0, y1)
                         x2 = min(w, x2)
@@ -96,7 +105,6 @@ class FishDetectionDataset(torch.utils.data.Dataset):
         img_path = os.path.join(self.img_dir, self.imgs[idx])
         with Image.open(img_path) as img:
             return img.height, img.width
-
 
 def collate_fn(batch):
     return tuple(zip(*batch))

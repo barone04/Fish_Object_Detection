@@ -140,7 +140,6 @@ def _create_faster_rcnn_hybrid(backbone_body, num_classes, weights_backbone, fpn
         aspect_ratios=((0.5, 1.0, 2.0),) * 5
     )
 
-
     box_roi_pool = MultiScaleRoIAlign(
         featmap_names=['0', '1', '2', '3'],
         output_size=7,
