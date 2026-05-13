@@ -6,8 +6,6 @@ from engines import trainer_det, utils as engine_utils
 from data.fish_det_dataset import FishDetectionDataset, collate_fn
 from data import presets
 
-# Import model builder từ project của bạn
-# Giả định models.faster_rcnn trỏ tới logic gọi được CP_resnet
 from models.faster_rcnn import fasterrcnn_resnet50_fpn
 
 

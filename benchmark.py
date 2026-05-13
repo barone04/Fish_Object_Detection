@@ -6,7 +6,6 @@ from thop import profile
 from models.faster_rcnn import fasterrcnn_resnet50_fpn, fasterrcnn_resnet18_fpn
 
 # --- CẤU HÌNH ĐƯỜNG DẪN ---
-# Kiểm tra kỹ đường dẫn file của bạn
 BASELINE_PATH = "output/pipeline2_fpn/step1_dense_det/model_best.pth"
 PRUNED_PATH = "output/pipeline2_fpn/step3_final_result/model_best.pth"
 PRUNED_CONFIG = "output/pipeline2_fpn/step2_pruned_det/model_lean.json"
@@ -17,7 +16,6 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 def measure_model(model_name, weights, config=None):
     print(f"\nMeasuring: {model_name}...")
 
-    # --- 1. XỬ LÝ CONFIG (Fix lỗi KeyError) ---
     backbone_rates = None
     fpn_rates = None
 
@@ -93,8 +91,6 @@ def measure_model(model_name, weights, config=None):
 
     # --- 5. ĐO FPS (Fix lỗi targets is None) ---
     try:
-        # QUAN TRỌNG: Ép kiểu về Eval Mode một lần nữa để chắc chắn
-        # (Vì thop hoặc Wrapper có thể đã vô tình reset trạng thái)
         model.eval()
 
         # Input chuẩn bị cho loop đo FPS
