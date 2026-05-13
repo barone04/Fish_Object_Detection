@@ -2,11 +2,11 @@
 set -e
 
 # --- CẤU HÌNH ---
-DATA_ROOT="./NewDeepfish/NewDeepfish"
+DATA_ROOT="./NewEtroplusMaculatus"
 OUTPUT_ROOT="./output/pipeline2"
 BATCH_SIZE=8
 WORKERS=16
-MODEL="fasterrcnn_resnet18_fpn"
+MODEL="mobilenet_v3"
 
 echo "======================================================="
 echo "STARTING PIPELINE 2: END-TO-END DETECTION PRUNING"
@@ -16,7 +16,7 @@ echo "======================================================="
 # ---------------------------------------------------------
 # BƯỚC 1: Train Dense Detection Model
 # Mục tiêu: Có một mô hình Detection chuẩn (mAP cao nhất)
-# Cũ: 60 epochs
+# Cũ: 60 epochs   50
 # ---------------------------------------------------------
 echo "[Step 1/3] Training Dense Faster R-CNN..."
 python train_det.py \
@@ -35,8 +35,8 @@ python train_det.py \
 # BƯỚC 2: Pruning Loop
 # --checkpoint $OUTPUT_ROOT/step1_dense_det/model_best.pth \
 # --checkpoint ./output/prune_fpn_resnet18/resnet18-fpn/step1_dense_det/model_best.pth \
-# prune-iters = 8
-# finetune-epochs = 10
+# prune-iters = 8   6
+# finetune-epochs = 10  10
 # ---------------------------------------------------------
 echo "[Step 2/3] Iterative Pruning (SongHan + Filter)..."
 python prune_det.py \
@@ -55,7 +55,7 @@ python prune_det.py \
 
 # ---------------------------------------------------------
 # BƯỚC 3: Final Finetuning
-# Cũ: 50 epochs
+# Cũ: 50 epochs 40
 # ---------------------------------------------------------
 echo "[Step 3/3] Final Finetuning..."
 python train_det.py \
