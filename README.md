@@ -1,6 +1,6 @@
-# :fish: Fish object detection with BiFPN
-
 <div align="center">
+
+# :fish: Accelerating and Deploying Faster R-CNN on Edge Devices for Online Fish
 
 [![Visitors](https://visitor-badge.laobi.icu/badge?page_id=barone04.PrunedFishNet)](https://github.com/barone04/PrunedFishNet)
 [![Python 3.10](https://img.shields.io/badge/Python-3.10-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3100/)
