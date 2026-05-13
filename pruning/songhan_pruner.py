@@ -13,12 +13,9 @@ class UnstructuredPruner:
         """
         print(f"Executing Song Han Pruning (Sensitivity={sensitivity})...")
 
-        # Hàm get_prunable_layers đã được định nghĩa trong ResNet Hybrid
-        # Nó trả về danh sách các ConvBNReLU
         convs = self.model.get_prunable_layers(pruning_type="unstructured")
 
         for layer in convs:
-            # Lấy trọng số thực tế (đã nhân mask cũ nếu có)
             weight = layer.conv.weight.data
 
             # Tính threshold = sensitivity * std
@@ -27,9 +24,6 @@ class UnstructuredPruner:
 
             # Tạo mask mới: 1 nếu |w| > threshold, ngược lại 0
             new_mask = (weight.abs() > threshold).float()
-
-            # Cập nhật vào UnstructuredMask handler
-            # Lưu ý: Hàm get_prunable_layers tự động tạo mask_handler nếu chưa có
             layer.mask_handler.update(new_mask)
 
             # Apply ngay lập tức (Zeroing)

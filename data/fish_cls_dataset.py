@@ -33,8 +33,6 @@ class FishClassificationDataset(Dataset):
             img_path = os.path.join(self.img_dir, img_file)
 
             if os.path.exists(lbl_path):
-                # Cần đọc ảnh để biết width/height cho việc convert tọa độ
-                # Lưu ý: Việc open này chỉ đọc header, chưa load pixel nên nhanh
                 with Image.open(img_path) as im:
                     w, h = im.size
 

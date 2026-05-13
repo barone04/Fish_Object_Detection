@@ -32,11 +32,6 @@ class StructuredPruner:
         prune_ratio: Tỷ lệ số filter muốn cắt bỏ (VD: 0.3 = cắt 30%).
         """
         print(f"Executing Filter Pruning (Ratio={prune_ratio})...")
-
-        # Lấy danh sách các layer hỗ trợ structured pruning (ConvBNReLU)
-        # Lưu ý: Trong ResNet, ta thường chỉ prune Conv1 và Conv2 của Bottleneck
-        # Conv3 (Expansion) thường phải giữ nguyên channel để cộng với Shortcut (trừ khi prune cả shortcut)
-        # Để đơn giản và an toàn, ta prune tất cả layers trả về từ model
         convs = self.model.get_prunable_layers(pruning_type="structured")
 
         total_pruned = 0
@@ -54,11 +49,7 @@ class StructuredPruner:
                 layer.mask_handler.update(torch.ones(n, device=weight.device))
                 continue
 
-            # 3. Tìm các cặp giống nhau nhất (khoảng cách nhỏ nhất)
-            # Lấy tam giác trên của ma trận D để không lặp
             mask_tri = torch.triu(torch.ones_like(D), diagonal=1)
-            # D_flat chứa (dist, i, j)
-            # Lọc các phần tử > 0 (nếu dist=0 tức là filter chết sẵn, ta xử lý sau)
 
             pairs = []
             for i in range(n):
@@ -93,8 +84,6 @@ class StructuredPruner:
                 processed_indices.add(j)
                 count += 1
 
-            # Nếu vẫn chưa cắt đủ số lượng (do hết cặp rời rạc),
-            # cắt tiếp các filter có norm nhỏ nhất còn lại (Magnitude Pruning filler)
             if count < num_to_remove:
                 remaining_indices = [k for k in range(n) if k not in pruned_indices]
                 norms = [(l1inftyinfty(weight[k]), k) for k in remaining_indices]

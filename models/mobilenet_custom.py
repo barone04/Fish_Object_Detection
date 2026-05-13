@@ -69,12 +69,8 @@ def fasterrcnn_mobilenetv3_custom(
             p.requires_grad = False
         print(" -> Backbone FROZEN (requires_grad=False).")
 
-    # ====== Chọn 4 feature levels để khớp chuẩn FasterRCNN-FPN ======
-    # Lưu ý: keys là index của backbone.features (string)
-    # Đây là lựa chọn phổ biến (stride tăng dần); nếu torchvision thay đổi, vẫn OK vì ta sẽ đo channels bằng dummy.
     return_layers = {"2": "0", "5": "1", "12": "2", "16": "3"}
 
-    # ====== Tự đo in_channels_list để tránh sai channels do version torchvision ======
     body = IntermediateLayerGetter(backbone_model.features, return_layers=return_layers)
     with torch.no_grad():
         dummy = torch.zeros(1, 3, 224, 224)
@@ -91,7 +87,6 @@ def fasterrcnn_mobilenetv3_custom(
         fpn_compress_rate=fpn_compress_rate
     )
 
-    # ====== RPN anchor generator: phải khớp 5 feature maps (0,1,2,3,pool) ======
     # anchor_generator = AnchorGenerator(
     #     sizes=((32,), (64,), (128,), (256,), (512,)),
     #     aspect_ratios=((0.5, 1.0, 2.0),) * 5

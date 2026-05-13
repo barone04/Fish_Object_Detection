@@ -170,7 +170,6 @@ def convert_to_lean_model(masked_model, save_path=None):
     try:
         if is_mobilenet:
             print(f"Initializing Lean MobileNetV3 (box_head_dim={box_head_dim})...")
-            # NOTE: builder mobilenet_custom PHẢI hỗ trợ box_head_dim để tránh mismatch
             lean_model = fasterrcnn_mobilenetv3_custom(
                 num_classes=num_classes,
                 fpn_compress_rate=fpn_compress_rates,
@@ -181,7 +180,6 @@ def convert_to_lean_model(masked_model, save_path=None):
                 max_size=320
             )
         else:
-            # GIỮ NGUYÊN LOGIC CŨ: xác định ResNet18/50 bằng type block
             first_block = masked_model.backbone.body.layer1[0]
             if isinstance(first_block, Bottleneck):
                 print("Initializing Lean ResNet50...")
@@ -210,8 +208,6 @@ def convert_to_lean_model(masked_model, save_path=None):
 
     lean_model.to(device)
     lean_model.eval()
-
-    # --- 3) COPY WEIGHTS (GIỮ NGUYÊN STYLE CŨ THEO state_dict; chỉ thêm MobileNet-safe copy) ---
     lean_state_dict = lean_model.state_dict()
     masked_state_dict = masked_model.state_dict()
 
@@ -319,14 +315,8 @@ def convert_to_lean_model(masked_model, save_path=None):
                 lean_param.data.copy_(masked_param.data[: lean_param.shape[0]])
             continue
 
-        # -------------------------
-        # B) STANDARD CONV/BN HANDLING
-        #    - ResNet: giữ nguyên logic cũ (output mask + input mask topology-aware)
-        #    - MobileNet: copy thẳng nếu shape khớp (backbone freeze)
-        # -------------------------
         if isinstance(lean_module, nn.Conv2d):
             if is_mobilenet:
-                # MobileNet backbone không prune -> shapes nên khớp
                 if lean_param.shape == masked_param.shape:
                     lean_param.data.copy_(masked_param.data)
                 else:
