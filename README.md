@@ -91,12 +91,12 @@ We evaluate on **DeepFish**: dense vs. pruned detectors (Params, FLOPs, FPS). **
 
 ### Qualitative detection — inline previews
 
-| ResNet-18 + FPN (baseline) | ResNet-18 + pruned backbone |
-|----------------------------|-----------------------------|
+| ResNet-18 (pruned backbone + FPN)                                                           | ResNet-18 (pruned backbone)                                                                               |
+|---------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------|
 | ![ResNet-18 FPN baseline detection demo (800×800)](assets/results/resnet18_fpn_800x800.gif) | ![ResNet-18 pruned backbone detection demo (800×800)](assets/results/resnet18_prune_backbone_800x800.gif) |
 
-| ResNet-50 + pruned backbone | MobileNetV3 |
-|----------------------------|-------------|
+| ResNet-50 (pruned backbone)                                                                               | MobileNetV3 (pruned FPN)                                                        |
+|-----------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------|
 | ![ResNet-50 pruned backbone detection demo (800×800)](assets/results/resnet50_prune_backbone_800x800.gif) | ![MobileNetV3 detection demo (800×800)](assets/results/mobilenetv3_800x800.gif) |
 
 # :wrench: Installation
