@@ -1,5 +1,14 @@
 # :fish: Fish object detection with BiFPN
 
+<div align="center">
+
+[![Visitors](https://visitor-badge.laobi.icu/badge?page_id=barone04.PrunedFishNet)](https://github.com/barone04/PrunedFishNet)
+[![Python 3.10](https://img.shields.io/badge/Python-3.10-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3100/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?style=flat&logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+</div>
+
 ---
 
 <div align="center">
