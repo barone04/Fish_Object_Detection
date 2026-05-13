@@ -15,8 +15,6 @@
 
 <div align="center">
 
-## Affiliations
-
 <div style="font-size: 0.95em; line-height: 1.4;">
 
 <sup>1</sup> VNU University of Science, Hanoi, Vietnam  
